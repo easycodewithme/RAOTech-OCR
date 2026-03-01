@@ -1,0 +1,58 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  clerkId   String   @unique // We link this to the Clerk Authentication ID
+  email     String   @unique
+  name      String?
+  plan      Plan     @default(FREE)
+  
+  invoices  Invoice[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// prisma/schema.prisma
+
+model Invoice {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  
+  fileUrl        String   
+  status         InvoiceStatus @default(PENDING)
+  
+  // Make these OPTIONAL (?) so saving never fails due to validation
+  invoiceNumber  String?
+  date           DateTime?
+  totalAmount    Float?   
+  taxAmount      Float?
+
+  extractedData  Json?    // We store the full raw data here
+  
+  createdAt      DateTime @default(now())
+}
+
+// Keep your User model and Enums as they are...
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum InvoiceStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
