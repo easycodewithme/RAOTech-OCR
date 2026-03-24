@@ -11,39 +11,63 @@ datasource db {
 
 model User {
   id        String   @id @default(uuid())
-  clerkId   String   @unique // We link this to the Clerk Authentication ID
+  clerkId   String   @unique
   email     String   @unique
   name      String?
   plan      Plan     @default(FREE)
-  
+
   invoices  Invoice[]
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-// prisma/schema.prisma
-
 model Invoice {
-  id             String   @id @default(uuid())
+  id             String        @id @default(uuid())
   userId         String
-  user           User     @relation(fields: [userId], references: [id])
-  
-  fileUrl        String   
+  user           User          @relation(fields: [userId], references: [id])
+
+  fileUrl        String
   status         InvoiceStatus @default(PENDING)
-  
-  // Make these OPTIONAL (?) so saving never fails due to validation
+
+  // Core fields
   invoiceNumber  String?
   date           DateTime?
-  totalAmount    Float?   
+  totalAmount    Float?
   taxAmount      Float?
 
-  extractedData  Json?    // We store the full raw data here
-  
-  createdAt      DateTime @default(now())
-}
+  // Vendor details (from OCR backend)
+  vendor         String?
+  vendorGstin    String?
+  vendorAddress  String?
+  vendorPhone    String?
 
-// Keep your User model and Enums as they are...
+  // Customer details
+  customerName   String?
+  customerGstin  String?
+
+  // Tax breakdown (Indian GST)
+  subtotal       Float?
+  cgst           Float?
+  sgst           Float?
+  igst           Float?
+  discount       Float?
+
+  // GST validation
+  gstValid       Boolean?
+  gstState       String?
+
+  // Processing metadata
+  ocrEngine      String?
+  processingTime Float?
+
+  // Full raw data from OCR
+  extractedData  Json?
+  items          Json?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
 
 enum Plan {
   FREE

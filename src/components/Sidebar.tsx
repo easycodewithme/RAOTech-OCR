@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, UploadCloud, MessageSquare, LogOut } from "lucide-react";
+import { LayoutDashboard, UploadCloud, MessageSquare, LogOut, Receipt } from "lucide-react";
 import { cn } from "@/lib/utils"; // Shadcn utility
 import { SignOutButton } from "@clerk/nextjs";
 
@@ -14,13 +14,13 @@ const routes = [
     color: "text-sky-500",
   },
   {
-    label: "Upload Document",
+    label: "Upload Invoice",
     icon: UploadCloud,
-    href: "/upload", // The page we will build next
+    href: "/upload",
     color: "text-violet-500",
   },
   {
-    label: "Chatbot",
+    label: "AI Assistant",
     icon: MessageSquare,
     href: "/chat",
     color: "text-pink-700",

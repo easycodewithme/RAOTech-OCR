@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8001";
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -9,32 +11,33 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
-    // --- START: MICROSERVICE 2 CONNECTION ---
-    // In the future, you will replace this block with:
-    // const externalResponse = await fetch('YOUR_PYTHON_MICROSERVICE_URL', { body: formData });
-    // const result = await externalResponse.json();
-    
-    // For now, we simulate the OCR response so you can test the Frontend Table
-    // Simulate a 2-second delay
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Forward the file to FastAPI backend /extract endpoint
+    const backendForm = new FormData();
+    backendForm.append("file", file);
 
-    const mockResponse = {
-      invoice_number: "INV-2024-001",
-      date: "2024-12-10",
-      total_amount: "$1,250.00",
-      vendor: "Tech Solutions Inc.",
-      items: [
-        { name: "Server Maintenance", qty: 1, price: 500 },
-        { name: "Consulting Hours", qty: 5, price: 150 }
-      ],
-      tax: "$100.00"
-    };
-    // --- END: MICROSERVICE 2 CONNECTION ---
+    const response = await fetch(`${BACKEND_URL}/extract`, {
+      method: "POST",
+      body: backendForm,
+    });
 
-    return NextResponse.json(mockResponse);
-    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: "Backend extraction failed" }));
+      return NextResponse.json(
+        { error: errorData.detail || "Extraction failed" },
+        { status: response.status }
+      );
+    }
+
+    const result = await response.json();
+
+    // Backend returns: { success, message, data, gst_validation, job_id, processing_time, ocr_engine, file_metadata }
+    return NextResponse.json(result);
+
   } catch (error) {
-    console.error("[UPLOAD_ERROR]", error);
-    return NextResponse.json({ error: "Internal Error" }, { status: 500 });
+    console.error("[PROCESS_INVOICE_ERROR]", error);
+    return NextResponse.json(
+      { error: "Failed to connect to OCR backend. Is the Python server running on port 8001?" },
+      { status: 502 }
+    );
   }
 }

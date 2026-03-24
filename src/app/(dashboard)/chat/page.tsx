@@ -42,10 +42,12 @@ export default function ChatPage() {
     setIsLoading(true);
 
     try {
-      // 2. Call API
+      // 2. Call API with conversation history for context
+      const history = messages.map((m) => ({ role: m.role, content: m.content }));
       const res = await fetch("/api/chat", {
         method: "POST",
-        body: JSON.stringify({ message: userMessage }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage, history }),
       });
 
       const data = await res.json();
@@ -68,7 +70,7 @@ export default function ChatPage() {
           <Bot className="h-8 w-8 text-blue-600" />
           AI Invoice Assistant
         </h1>
-        <p className="text-gray-500 text-sm">Powered by RAG</p>
+        <p className="text-gray-500 text-sm">Powered by Gemini AI - Ask questions about your invoices</p>
       </div>
 
       {/* Messages Area */}

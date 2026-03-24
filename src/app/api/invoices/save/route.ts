@@ -1,65 +1,97 @@
 import { NextResponse } from "next/server";
-import { currentUser } from "@clerk/nextjs/server"; // Changed from 'auth' to 'currentUser' to get email
+import { currentUser } from "@clerk/nextjs/server";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+const cleanMoney = (val: any): number => {
+  if (typeof val === "number") return val;
+  if (typeof val === "string") {
+    return parseFloat(val.replace(/[^0-9.-]+/g, "")) || 0;
+  }
+  return 0;
+};
+
+const cleanDate = (val: any): Date => {
+  if (!val) return new Date();
+  // Handle DD/MM/YYYY and DD-MM-YYYY formats from Indian invoices
+  if (typeof val === "string") {
+    const ddmmyyyy = val.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (ddmmyyyy) {
+      const d = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+  }
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? new Date() : d;
+};
+
 export async function POST(req: Request) {
   try {
-    // 1. Get the full User object from Clerk
     const user = await currentUser();
-    
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 2. SYNC: Ensure User exists in our Postgres Database
-    // We try to find them by 'email'. If found, we do nothing. If not, we create them.
     const email = user.emailAddresses[0]?.emailAddress;
-    
+
     const dbUser = await prisma.user.upsert({
       where: { email: email },
-      update: {}, // No updates if they exist
+      update: {},
       create: {
-        id: user.id, // OPTIONAL: We force the DB ID to match Clerk ID to make life easier
+        id: user.id,
         clerkId: user.id,
         email: email,
         name: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
-        plan: "FREE" 
+        plan: "FREE",
       },
     });
 
-    // 3. Process the Invoice Data
     const body = await req.json();
-    const { extractedData, fileName } = body;
+    const { extractedData, gstValidation, fileName, processingTime, ocrEngine } = body;
 
-    const cleanMoney = (val: any) => {
-      if (typeof val === 'number') return val;
-      if (typeof val === 'string') {
-        return parseFloat(val.replace(/[^0-9.-]+/g,"")) || 0;
-      }
-      return 0;
-    };
-
-    const cleanDate = (val: any) => {
-      const d = new Date(val);
-      return isNaN(d.getTime()) ? new Date() : d;
-    };
-
-    // 4. Save Invoice using the 'dbUser.id'
+    // extractedData comes from backend's response.data (the actual invoice fields)
     const invoice = await prisma.invoice.create({
       data: {
-        userId: dbUser.id, // Link to the user we just ensured exists
-        fileUrl: `https://fake-storage.com/${fileName}`,
-        
-        invoiceNumber: extractedData.invoice_number || "UNKNOWN",
+        userId: dbUser.id,
+        fileUrl: fileName || "invoice",
+        status: "PROCESSED",
+
+        // Core fields
+        invoiceNumber: extractedData.invoice_number || null,
         date: cleanDate(extractedData.date),
         totalAmount: cleanMoney(extractedData.total_amount),
         taxAmount: cleanMoney(extractedData.tax),
-        
-        status: "PROCESSED",
+
+        // Vendor details
+        vendor: extractedData.vendor || null,
+        vendorGstin: extractedData.vendor_gstin || null,
+        vendorAddress: extractedData.vendor_address || null,
+        vendorPhone: extractedData.vendor_phone || null,
+
+        // Customer details
+        customerName: extractedData.customer_name || null,
+        customerGstin: extractedData.customer_gstin || null,
+
+        // Tax breakdown
+        subtotal: cleanMoney(extractedData.subtotal) || null,
+        cgst: cleanMoney(extractedData.cgst) || null,
+        sgst: cleanMoney(extractedData.sgst) || null,
+        igst: cleanMoney(extractedData.igst) || null,
+        discount: cleanMoney(extractedData.discount) || null,
+
+        // GST validation
+        gstValid: gstValidation?.is_valid_invoice ?? null,
+        gstState: gstValidation?.vendor_state ?? null,
+
+        // Processing metadata
+        ocrEngine: ocrEngine || null,
+        processingTime: processingTime || null,
+
+        // Full raw data
         extractedData: extractedData,
-      }
+        items: extractedData.items || null,
+      },
     });
 
     return NextResponse.json({ success: true, invoice });
