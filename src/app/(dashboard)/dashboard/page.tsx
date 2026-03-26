@@ -1,5 +1,4 @@
 import { currentUser } from "@clerk/nextjs/server";
-import { PrismaClient } from "@prisma/client";
 import {
   FileText,
   Plus,
@@ -15,15 +14,24 @@ import {
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { redirect } from "next/navigation";
-
-const prisma = new PrismaClient();
+import { prisma } from "@/lib/prisma";
 
 export default async function Dashboard() {
   const user = await currentUser();
   if (!user) return redirect("/sign-in");
 
-  const dbUser = await prisma.user.findUnique({
-    where: { email: user.emailAddresses[0].emailAddress },
+  const email = user.emailAddresses[0]?.emailAddress;
+  if (!email) return redirect("/sign-in");
+
+  // Auto-create user on first login
+  const dbUser = await prisma.user.upsert({
+    where: { email },
+    update: { name: user.firstName || user.username || undefined },
+    create: {
+      clerkId: user.id,
+      email,
+      name: user.firstName || user.username || "User",
+    },
     include: {
       invoices: { orderBy: { createdAt: "desc" } },
     },

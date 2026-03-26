@@ -1,9 +1,7 @@
 import { currentUser } from "@clerk/nextjs/server";
-import { PrismaClient } from "@prisma/client";
 import { redirect } from "next/navigation";
 import InvoiceDetailView from "./InvoiceDetailView";
-
-const prisma = new PrismaClient();
+import { prisma } from "@/lib/prisma";
 
 interface PageProps {
   params: Promise<{ invoiceId: string }>;
