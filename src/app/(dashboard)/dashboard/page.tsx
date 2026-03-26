@@ -23,19 +23,32 @@ export default async function Dashboard() {
   const email = user.emailAddresses[0]?.emailAddress;
   if (!email) return redirect("/sign-in");
 
-  // Auto-create user on first login
-  const dbUser = await prisma.user.upsert({
-    where: { email },
-    update: { name: user.firstName || user.username || undefined },
-    create: {
-      clerkId: user.id,
-      email,
-      name: user.firstName || user.username || "User",
-    },
-    include: {
-      invoices: { orderBy: { createdAt: "desc" } },
-    },
-  });
+  let dbUser;
+  try {
+    // Auto-create user on first login
+    dbUser = await prisma.user.upsert({
+      where: { email },
+      update: { name: user.firstName || user.username || undefined },
+      create: {
+        clerkId: user.id,
+        email,
+        name: user.firstName || user.username || "User",
+      },
+      include: {
+        invoices: { orderBy: { createdAt: "desc" } },
+      },
+    });
+  } catch (error: any) {
+    console.error("[DASHBOARD_DB_ERROR]", error?.message || error);
+    // Return a safe fallback UI instead of crashing
+    return (
+      <div className="p-10 text-center">
+        <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
+        <p className="text-gray-500">Unable to connect to database. Please try again in a moment.</p>
+        <p className="text-xs text-red-400 mt-2">{error?.message || "Unknown error"}</p>
+      </div>
+    );
+  }
 
   const invoices = dbUser?.invoices || [];
   const totalInvoices = invoices.length;
