@@ -1,21 +1,14 @@
-import { currentUser } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
 import InvoiceDetailView from "./InvoiceDetailView";
-import { prisma } from "@/lib/prisma";
+import { getMockInvoice } from "@/lib/mockData";
 
 interface PageProps {
   params: Promise<{ invoiceId: string }>;
 }
 
 export default async function InvoiceDetailPage({ params }: PageProps) {
-  const user = await currentUser();
-  if (!user) redirect("/sign-in");
-
   const { invoiceId } = await params;
 
-  const invoice = await prisma.invoice.findUnique({
-    where: { id: invoiceId },
-  });
+  const invoice = getMockInvoice(invoiceId);
 
   if (!invoice) {
     return (
@@ -26,8 +19,5 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     );
   }
 
-  // Serialize for client component (dates become strings)
-  const serialized = JSON.parse(JSON.stringify(invoice));
-
-  return <InvoiceDetailView invoice={serialized} />;
+  return <InvoiceDetailView invoice={invoice} />;
 }

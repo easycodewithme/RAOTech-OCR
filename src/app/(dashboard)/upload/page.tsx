@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,14 +46,20 @@ const MAX_FILES = 15;
 const MAX_FILE_SIZE_MB = 20;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = ".pdf,.jpg,.jpeg,.png,.bmp,.tiff,.webp";
+const MIN_TALLY_SAVE_MS = 4000;
+const SAVE_PROGRESS_INTERVAL_MS = 300;
 
 export default function UploadPage() {
-  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const documentsRef = useRef<UploadDoc[]>([]);
+  const saveProgressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const saveProgressResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveProgressStartRef = useRef<number | null>(null);
   const [documents, setDocuments] = useState<UploadDoc[]>([]);
   const [extractingAll, setExtractingAll] = useState(false);
   const [savingAll, setSavingAll] = useState(false);
+  const [saveAllProgress, setSaveAllProgress] = useState(0);
+  const [saveAllStatus, setSaveAllStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -77,8 +82,62 @@ export default function UploadPage() {
       documentsRef.current.forEach((doc) => {
         if (doc.previewUrl) URL.revokeObjectURL(doc.previewUrl);
       });
+      if (saveProgressTimerRef.current) {
+        clearInterval(saveProgressTimerRef.current);
+      }
+      if (saveProgressResetRef.current) {
+        clearTimeout(saveProgressResetRef.current);
+      }
     };
   }, []);
+
+  const startSaveAllProgress = () => {
+    if (saveProgressTimerRef.current) {
+      clearInterval(saveProgressTimerRef.current);
+    }
+    if (saveProgressResetRef.current) {
+      clearTimeout(saveProgressResetRef.current);
+    }
+    setSaveAllStatus("saving");
+    setSaveAllProgress(0);
+    saveProgressStartRef.current = Date.now();
+    saveProgressTimerRef.current = setInterval(() => {
+      setSaveAllProgress((prev) => {
+        if (prev >= 92) return prev;
+        const bump = 2 + Math.floor(Math.random() * 3);
+        return Math.min(prev + bump, 92);
+      });
+    }, SAVE_PROGRESS_INTERVAL_MS);
+  };
+
+  const finishSaveAllProgress = (status: "success" | "error") => {
+    const startedAt = saveProgressStartRef.current || Date.now();
+    const elapsed = Date.now() - startedAt;
+    const remaining = Math.max(0, MIN_TALLY_SAVE_MS - elapsed);
+
+    const finalize = () => {
+      if (saveProgressTimerRef.current) {
+        clearInterval(saveProgressTimerRef.current);
+        saveProgressTimerRef.current = null;
+      }
+      setSaveAllStatus(status);
+      setSaveAllProgress(100);
+      saveProgressResetRef.current = setTimeout(() => {
+        setSaveAllProgress(0);
+        setSaveAllStatus("idle");
+        saveProgressStartRef.current = null;
+      }, 1800);
+    };
+
+    if (remaining > 0) {
+      if (saveProgressResetRef.current) {
+        clearTimeout(saveProgressResetRef.current);
+      }
+      saveProgressResetRef.current = setTimeout(finalize, remaining);
+    } else {
+      finalize();
+    }
+  };
 
   const addFiles = (incomingFiles: File[]) => {
     if (!incomingFiles.length) return;
@@ -312,6 +371,7 @@ export default function UploadPage() {
     }
 
     setSavingAll(true);
+    startSaveAllProgress();
     setError(null);
 
     let failed = 0;
@@ -322,8 +382,10 @@ export default function UploadPage() {
 
     setSavingAll(false);
 
+    finishSaveAllProgress(failed === 0 ? "success" : "error");
+
     if (failed === 0) {
-      router.push("/dashboard");
+      return;
     } else {
       setError(`${failed} document(s) failed to save. Fix errors and try again.`);
     }
@@ -412,20 +474,42 @@ export default function UploadPage() {
               {savingAll ? (
                 <>
                   <Loader2 className="animate-spin mr-2 h-4 w-4" />
-                  Saving All...
+                  Saving in Tally...
                 </>
               ) : savedCount === documents.length ? (
                 <>
                   <CheckCircle2 className="mr-2 h-4 w-4" />
-                  All Saved
+                  Saved in Tally
                 </>
               ) : (
                 <>
                   <Save className="mr-2 h-4 w-4" />
-                  Save All Documents
+                  Save in Tally
                 </>
               )}
             </Button>
+          </div>
+        )}
+        {saveAllProgress > 0 && (
+          <div className="mt-4 w-full max-w-xl">
+            <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
+              <span>
+                {saveAllStatus === "success"
+                  ? "Saved in Tally"
+                  : saveAllStatus === "error"
+                  ? "Saved with errors in Tally"
+                  : "Saving all documents in Tally"}
+              </span>
+              <span>{saveAllProgress}%</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  saveAllStatus === "error" ? "bg-red-500" : "bg-green-600"
+                }`}
+                style={{ width: `${saveAllProgress}%` }}
+              />
+            </div>
           </div>
         )}
       </div>

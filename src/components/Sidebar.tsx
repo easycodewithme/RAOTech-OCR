@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, UploadCloud, MessageSquare, LogOut, Receipt } from "lucide-react";
 import { cn } from "@/lib/utils"; // Shadcn utility
-import { SignOutButton } from "@clerk/nextjs";
 
 const routes = [
   {
@@ -55,12 +54,13 @@ export function Sidebar() {
         </div>
       </div>
       <div className="px-3 py-2">
-         <SignOutButton>
-            <div className="flex items-center p-3 text-zinc-400 hover:text-white hover:bg-white/10 rounded-lg cursor-pointer transition">
-                <LogOut className="h-5 w-5 mr-3 text-red-500" />
-                Logout
-            </div>
-         </SignOutButton>
+        <Link
+          href="/"
+          className="flex items-center p-3 text-zinc-400 hover:text-white hover:bg-white/10 rounded-lg cursor-pointer transition"
+        >
+          <LogOut className="h-5 w-5 mr-3 text-red-500" />
+          Logout
+        </Link>
       </div>
     </div>
   );

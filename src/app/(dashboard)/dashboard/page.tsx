@@ -1,4 +1,3 @@
-import { currentUser } from "@clerk/nextjs/server";
 import {
   FileText,
   Plus,
@@ -13,44 +12,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { getMockUser, listMockInvoices } from "@/lib/mockData";
 
 export default async function Dashboard() {
-  const user = await currentUser();
-  if (!user) return redirect("/sign-in");
-
-  const email = user.emailAddresses[0]?.emailAddress;
-  if (!email) return redirect("/sign-in");
-
-  let dbUser;
-  try {
-    // Auto-create user on first login
-    dbUser = await prisma.user.upsert({
-      where: { email },
-      update: { name: user.firstName || user.username || undefined },
-      create: {
-        clerkId: user.id,
-        email,
-        name: user.firstName || user.username || "User",
-      },
-      include: {
-        invoices: { orderBy: { createdAt: "desc" } },
-      },
-    });
-  } catch (error: any) {
-    console.error("[DASHBOARD_DB_ERROR]", error?.message || error);
-    // Return a safe fallback UI instead of crashing
-    return (
-      <div className="p-10 text-center">
-        <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
-        <p className="text-gray-500">Unable to connect to database. Please try again in a moment.</p>
-        <p className="text-xs text-red-400 mt-2">{error?.message || "Unknown error"}</p>
-      </div>
-    );
-  }
-
-  const invoices = dbUser?.invoices || [];
+  const user = getMockUser();
+  const invoices = listMockInvoices();
   const totalInvoices = invoices.length;
   const totalAmount = invoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
   const totalTax = invoices.reduce((sum, inv) => sum + (inv.taxAmount || 0), 0);
@@ -78,7 +44,7 @@ export default async function Dashboard() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-gray-500 text-sm mt-1">
-            Welcome back, {user.firstName || "User"}
+            Welcome back, {user.name || "User"}
           </p>
         </div>
         <div className="flex gap-3">

@@ -1,21 +1,11 @@
 import { NextResponse } from "next/server";
-import { currentUser } from "@clerk/nextjs/server";
-import { prisma } from "@/lib/prisma";
+import { listMockInvoices } from "@/lib/mockData";
 
 export async function GET(req: Request) {
   try {
-    const user = await currentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const invoices = listMockInvoices();
 
-    const email = user.emailAddresses[0]?.emailAddress;
-    const dbUser = await prisma.user.findUnique({
-      where: { email },
-      include: { invoices: { orderBy: { createdAt: "desc" } } },
-    });
-
-    if (!dbUser || dbUser.invoices.length === 0) {
+    if (invoices.length === 0) {
       return NextResponse.json({ error: "No invoices to export" }, { status: 404 });
     }
 
@@ -28,7 +18,7 @@ export async function GET(req: Request) {
         "CGST", "SGST", "IGST", "Tax", "Total Amount", "GST Valid", "Status"
       ];
 
-      const rows = dbUser.invoices.map((inv) => [
+      const rows = invoices.map((inv) => [
         inv.invoiceNumber || "",
         inv.vendor || "",
         inv.vendorGstin || "",
@@ -56,13 +46,11 @@ export async function GET(req: Request) {
       });
     }
 
-    // JSON export
     return NextResponse.json({
       exported_at: new Date().toISOString(),
-      total: dbUser.invoices.length,
-      invoices: dbUser.invoices,
+      total: invoices.length,
+      invoices,
     });
-
   } catch (error) {
     console.error("[EXPORT_ERROR]", error);
     return NextResponse.json({ error: "Export failed" }, { status: 500 });
