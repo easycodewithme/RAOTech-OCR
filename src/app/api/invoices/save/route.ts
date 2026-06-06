@@ -1,28 +1,8 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
-
-const cleanMoney = (val: any): number => {
-  if (typeof val === "number") return val;
-  if (typeof val === "string") {
-    return parseFloat(val.replace(/[^0-9.-]+/g, "")) || 0;
-  }
-  return 0;
-};
-
-const cleanDate = (val: any): Date => {
-  if (!val) return new Date();
-  // Handle DD/MM/YYYY and DD-MM-YYYY formats from Indian invoices
-  if (typeof val === "string") {
-    const ddmmyyyy = val.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-    if (ddmmyyyy) {
-      const d = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
-      if (!isNaN(d.getTime())) return d;
-    }
-  }
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? new Date() : d;
-};
+import { cleanMoney, cleanDate } from "@/lib/accounting/normalize";
+import { createDraftVoucherForInvoice } from "@/lib/accounting/createVoucher";
 
 export async function POST(req: Request) {
   try {
@@ -91,6 +71,13 @@ export async function POST(req: Request) {
         items: extractedData.items || null,
       },
     });
+
+    // Build a DRAFT accounting voucher (best-effort — never block the OCR save)
+    try {
+      await createDraftVoucherForInvoice(dbUser.id, invoice.id);
+    } catch (voucherErr) {
+      console.error("[VOUCHER_DRAFT_ERROR]", voucherErr);
+    }
 
     return NextResponse.json({ success: true, invoice });
 

@@ -17,7 +17,11 @@ model User {
   name      String?
   plan      Plan     @default(FREE)
 
-  invoices  Invoice[]
+  invoices       Invoice[]
+  ledgers        Ledger[]
+  ledgerMappings LedgerMapping[]
+  mappingRules   MappingRule[]
+  vouchers       Voucher[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -66,8 +70,208 @@ model Invoice {
   extractedData  Json?
   items          Json?
 
+  // Accounting layer
+  documentType   String?       // PURCHASE | SALE classification (heuristic, user-editable)
+  voucher        Voucher?
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+// ===================================================================
+// Accounting layer (V1) — single-workspace; clientId reserved for future
+// ===================================================================
+
+model Ledger {
+  id          String      @id @default(uuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  clientId    String      @default("") // "" = workspace-level in V1; future multi-client
+
+  name        String      // "Sundry Creditors", "Purchase - GST 18%", "CGST Input"
+  group       LedgerGroup // Tally-style parent group
+  ledgerType  LedgerType  // semantic role used by the transform
+  gstRate     Float?      // for purchase/sales/tax ledgers, e.g. 18
+  isSeeded    Boolean     @default(false) // came from the standard chart
+  isSystem    Boolean     @default(false) // tax/round-off ledgers — undeletable
+  parentGstin String?     // optional: party ledger pinned to a GSTIN
+
+  mappings     LedgerMapping[]
+  ruleTargets  MappingRule[]
+  voucherLines VoucherLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, clientId, name])
+  @@index([userId, ledgerType])
+}
+
+model LedgerMapping {
+  id         String       @id @default(uuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id])
+  clientId   String       @default("")
+
+  matchType  MatchKeyType // GSTIN | VENDOR_NAME
+  matchKey   String       // normalized GSTIN or normalized vendor name
+  ledgerId   String
+  ledger     Ledger       @relation(fields: [ledgerId], references: [id])
+
+  hitCount   Int      @default(1)
+  lastUsedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, clientId, matchType, matchKey])
+  @@index([userId, matchType, matchKey])
+}
+
+model MappingRule {
+  id       String   @id @default(uuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id])
+  clientId String   @default("")
+
+  ruleType RuleType // GSTIN_EQUALS | VENDOR_NAME_CONTAINS | VENDOR_NAME_EQUALS | HSN_EQUALS
+  pattern  String   // the GSTIN / keyword / hsn to match (stored normalized)
+  ledgerId String
+  ledger   Ledger   @relation(fields: [ledgerId], references: [id])
+
+  priority Int     @default(100) // lower = evaluated first
+  enabled  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, enabled, priority])
+}
+
+model Voucher {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  clientId String   @default("")
+
+  invoiceId String  @unique
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+
+  voucherType VoucherType
+  status      VoucherStatus @default(DRAFT)
+  date        DateTime
+  narration   String?
+
+  totalDebit  Float
+  totalCredit Float
+  roundOff    Float @default(0)
+
+  approvedAt DateTime?
+  approvedBy String?
+
+  lines VoucherLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, voucherType, date])
+}
+
+model VoucherLine {
+  id        String  @id @default(uuid())
+  voucherId String
+  voucher   Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  ledgerId           String? // nullable: an UNMAPPED line blocks approval
+  ledger             Ledger?  @relation(fields: [ledgerId], references: [id])
+  ledgerNameSnapshot String?  // stable even if the ledger is renamed
+
+  role       LineRole
+  debit      Float      @default(0)
+  credit     Float      @default(0)
+
+  confidence Float?     // 0..1 from the resolver
+  mappedVia  MappedVia? // RULE | GSTIN_MEMORY | NAME_MEMORY | FUZZY | MANUAL | DEFAULT
+  hsnCode    String?
+  gstRate    Float?
+  sortOrder  Int        @default(0)
+
+  @@index([voucherId])
+  @@index([ledgerId])
+}
+
+enum LedgerGroup {
+  SUNDRY_CREDITORS
+  SUNDRY_DEBTORS
+  DUTIES_AND_TAXES
+  PURCHASE_ACCOUNTS
+  SALES_ACCOUNTS
+  DIRECT_EXPENSES
+  INDIRECT_EXPENSES
+  INDIRECT_INCOME
+  BANK_ACCOUNTS
+  CASH_IN_HAND
+  CURRENT_ASSETS
+  CURRENT_LIABILITIES
+  FIXED_ASSETS
+}
+
+enum LedgerType {
+  PARTY
+  PURCHASE
+  SALE
+  TAX_INPUT
+  TAX_OUTPUT
+  EXPENSE
+  INCOME
+  ROUND_OFF
+  BANK
+  CASH
+  OTHER
+}
+
+enum MatchKeyType {
+  GSTIN
+  VENDOR_NAME
+}
+
+enum RuleType {
+  GSTIN_EQUALS
+  VENDOR_NAME_CONTAINS
+  VENDOR_NAME_EQUALS
+  HSN_EQUALS
+}
+
+enum VoucherType {
+  PURCHASE
+  SALE
+  JOURNAL
+}
+
+enum VoucherStatus {
+  DRAFT
+  APPROVED
+  POSTED
+}
+
+enum LineRole {
+  PARTY
+  ITEM
+  CGST
+  SGST
+  IGST
+  ROUND_OFF
+  DISCOUNT
+}
+
+enum MappedVia {
+  RULE
+  GSTIN_MEMORY
+  NAME_MEMORY
+  FUZZY
+  MANUAL
+  DEFAULT
 }
 
 enum Plan {
