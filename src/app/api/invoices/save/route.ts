@@ -73,13 +73,15 @@ export async function POST(req: Request) {
     });
 
     // Build a DRAFT accounting voucher (best-effort — never block the OCR save)
+    let voucherId: string | null = null;
     try {
-      await createDraftVoucherForInvoice(dbUser.id, invoice.id);
+      const voucher = await createDraftVoucherForInvoice(dbUser.id, invoice.id);
+      voucherId = voucher?.id ?? null;
     } catch (voucherErr) {
       console.error("[VOUCHER_DRAFT_ERROR]", voucherErr);
     }
 
-    return NextResponse.json({ success: true, invoice });
+    return NextResponse.json({ success: true, invoice, voucherId });
 
   } catch (error) {
     console.error("[INVOICE_SAVE_ERROR]", error);

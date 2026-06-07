@@ -162,9 +162,7 @@ export default async function Dashboard() {
         <div className="lg:col-span-2 border rounded-xl bg-white shadow-sm overflow-hidden">
           <div className="p-5 border-b bg-gray-50/50 flex justify-between items-center">
             <h3 className="font-semibold">Vouchers to Review</h3>
-            <Link href="/vouchers" className="text-xs text-blue-600 hover:underline">
-              View all
-            </Link>
+            <span className="text-xs text-gray-500">{drafts.length} pending</span>
           </div>
 
           <div className="overflow-x-auto">

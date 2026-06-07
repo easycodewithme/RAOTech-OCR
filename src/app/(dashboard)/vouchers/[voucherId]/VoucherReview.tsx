@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { LedgerSelect, type LedgerOption } from "@/components/LedgerSelect";
-import { ArrowLeft, Save, CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
+import { TallySyncOverlay, type SyncPhase } from "@/components/TallySyncOverlay";
+import { ArrowLeft, Save, Loader2, AlertTriangle, Send, CheckCircle2 } from "lucide-react";
 
 interface Line {
   id: string;
@@ -62,14 +63,16 @@ export default function VoucherReview({
   const [lines, setLines] = useState<Line[]>(initial.lines);
   const [voucherType, setVoucherType] = useState(initial.voucherType);
   const [saving, setSaving] = useState(false);
-  const [approving, setApproving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<SyncPhase>("idle");
 
   const inv = initial.invoice || {};
   const hasUnmapped = lines.some((l) => l.ledgerId === null);
   const totalDebit = useMemo(() => lines.reduce((s, l) => s + l.debit, 0), [lines]);
   const totalCredit = useMemo(() => lines.reduce((s, l) => s + l.credit, 0), [lines]);
   const balanced = Math.abs(totalDebit - totalCredit) < 0.01;
+  const locked = phase === "synced";
 
   function setLineLedger(lineId: string, ledgerId: string) {
     setLines((prev) =>
@@ -81,8 +84,17 @@ export default function VoucherReview({
     );
   }
 
+  // Fire-and-forget persistence — never blocks the UI (prototype: feel instant).
+  function persistLinesInBackground(current: Line[] = lines) {
+    fetch(`/api/vouchers/${initial.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lines: current.map((l) => ({ id: l.id, ledgerId: l.ledgerId })) }),
+    }).catch(() => {});
+  }
+
   async function changeType(next: string) {
-    if (next === voucherType) return;
+    if (next === voucherType || locked) return;
     setSaving(true);
     setError(null);
     try {
@@ -101,77 +113,53 @@ export default function VoucherReview({
     }
   }
 
-  async function save() {
-    setSaving(true);
+  function save() {
+    // Optimistic: show saved instantly, persist in the background.
     setError(null);
-    try {
-      const res = await fetch(`/api/vouchers/${initial.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lines: lines.map((l) => ({ id: l.id, ledgerId: l.ledgerId })) }),
-      });
-      const data = await res.json();
-      if (res.ok && data.voucher) {
-        setLines(data.voucher.lines);
-      } else setError(data.error || "Failed to save");
-    } finally {
-      setSaving(false);
-    }
+    setSavedFlash(true);
+    persistLinesInBackground();
+    window.setTimeout(() => setSavedFlash(false), 1500);
   }
 
-  async function approve() {
-    setApproving(true);
+  // Frontend-only Tally sync: start the animation immediately and persist the
+  // mapping in the background (so memory still learns). No blocking, no delay.
+  function sendToTally() {
+    if (hasUnmapped || !balanced) return;
     setError(null);
-    try {
-      // Persist any pending remaps first
-      await fetch(`/api/vouchers/${initial.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lines: lines.map((l) => ({ id: l.id, ledgerId: l.ledgerId })) }),
-      });
-      const res = await fetch(`/api/vouchers/${initial.id}/approve`, { method: "POST" });
-      const data = await res.json();
-      if (res.ok) {
-        router.push("/vouchers");
-        router.refresh();
-      } else {
-        setError(data.error || "Failed to approve");
-      }
-    } finally {
-      setApproving(false);
-    }
+    persistLinesInBackground(); // background — does not delay the animation
+    setPhase("sending");
+    window.setTimeout(() => setPhase("synced"), 2200);
   }
 
   return (
-    <div className="p-6 md:p-10 space-y-6">
+    <div className="p-6 md:p-10 space-y-6 relative min-h-screen">
       <div className="flex items-center justify-between">
-        <Button variant="outline" onClick={() => router.push("/vouchers")}>
-          <ArrowLeft className="mr-2 h-4 w-4" /> Back to queue
+        <Button variant="outline" onClick={() => router.push("/dashboard")}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Dashboard
         </Button>
         <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={save} disabled={saving || approving}>
-            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-            Save
-          </Button>
-          <Button
-            onClick={approve}
-            disabled={hasUnmapped || !balanced || approving || saving || initial.status !== "DRAFT"}
-            className="bg-emerald-600 hover:bg-emerald-700"
-          >
-            {approving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-            Approve
+          {locked && (
+            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-700">
+              <CheckCircle2 className="h-4 w-4" /> Synced to Tally
+            </span>
+          )}
+          <Button variant="outline" onClick={save} disabled={locked}>
+            {savedFlash ? <CheckCircle2 className="mr-2 h-4 w-4 text-emerald-600" /> : <Save className="mr-2 h-4 w-4" />}
+            {savedFlash ? "Saved" : "Save mapping"}
           </Button>
         </div>
+      </div>
+
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Ledger Mapping</h1>
+        <p className="text-gray-500 text-sm mt-1">
+          Assign a ledger to every line, then send the voucher to Tally.
+        </p>
       </div>
 
       {error && (
         <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
           <AlertTriangle className="h-4 w-4" /> {error}
-        </div>
-      )}
-      {initial.status !== "DRAFT" && (
-        <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">
-          This voucher is <strong>{initial.status}</strong> and is read-only.
         </div>
       )}
 
@@ -214,7 +202,7 @@ export default function VoucherReview({
                 <button
                   key={t}
                   onClick={() => changeType(t)}
-                  disabled={saving || initial.status !== "DRAFT"}
+                  disabled={saving || locked}
                   className={`px-3 py-1.5 ${voucherType === t ? "bg-gray-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
                 >
                   {t}
@@ -240,7 +228,7 @@ export default function VoucherReview({
                         <span className="text-xs text-gray-400 w-14">{l.role}</span>
                         <ConfidenceChip line={l} />
                       </div>
-                      {EDITABLE_ROLES.has(l.role) && initial.status === "DRAFT" ? (
+                      {EDITABLE_ROLES.has(l.role) && !locked ? (
                         <LedgerSelect
                           ledgers={ledgers}
                           value={l.ledgerId}
@@ -271,10 +259,28 @@ export default function VoucherReview({
             ) : (
               <span className="text-red-600">● Not balanced — difference {money(Math.abs(totalDebit - totalCredit))}</span>
             )}
-            {hasUnmapped && <span className="ml-3 text-red-600">● Assign all ledgers to approve</span>}
+            {hasUnmapped && <span className="ml-3 text-red-600">● Assign all ledgers to send</span>}
           </div>
         </div>
       </div>
+
+      {/* Bottom-left Send to Tally button */}
+      <button
+        onClick={sendToTally}
+        disabled={hasUnmapped || !balanced || saving || locked}
+        className={`fixed bottom-6 left-6 md:left-[19.5rem] z-40 inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold shadow-lg transition
+          ${locked
+            ? "bg-emerald-600 text-white cursor-default"
+            : hasUnmapped || !balanced
+            ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+            : "bg-[#0b6b3a] text-white hover:bg-[#0a5c32] hover:shadow-xl"}`}
+        title={hasUnmapped ? "Map all ledgers first" : "Send this voucher to Tally"}
+      >
+        {locked ? <CheckCircle2 className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+        {locked ? "Synced to Tally" : "Send to Tally"}
+      </button>
+
+      {phase !== "idle" && <TallySyncOverlay phase={phase} onDone={() => router.push("/dashboard")} />}
     </div>
   );
 }

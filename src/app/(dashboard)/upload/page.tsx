@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   ImageIcon,
   FileUp,
+  ArrowRight,
 } from "lucide-react";
 
 type ExtractedData = Record<string, any>;
@@ -57,6 +58,7 @@ export default function UploadPage() {
   const [savingAll, setSavingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [docType, setDocType] = useState<"invoice" | "bank">("invoice");
 
   const extractedCount = useMemo(
     () => documents.filter((doc) => !!doc.extractedData).length,
@@ -183,7 +185,8 @@ export default function UploadPage() {
     data.append("file", doc.file);
 
     try {
-      const res = await fetch("/api/process-invoice", { method: "POST", body: data });
+      const endpoint = docType === "bank" ? "/api/process-bank" : "/api/process-invoice";
+      const res = await fetch(endpoint, { method: "POST", body: data });
       const json = await res.json();
 
       if (!res.ok || json.error) {
@@ -249,9 +252,9 @@ export default function UploadPage() {
     );
   };
 
-  const saveSingle = async (id: string) => {
+  const saveSingle = async (id: string): Promise<{ voucherId: string | null } | null> => {
     const doc = documents.find((d) => d.id === id);
-    if (!doc?.extractedData) return false;
+    if (!doc?.extractedData) return null;
 
     setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, saving: true, error: null } : d)));
 
@@ -269,10 +272,11 @@ export default function UploadPage() {
       });
 
       if (res.ok) {
+        const json = await res.json();
         setDocuments((prev) =>
           prev.map((d) => (d.id === id ? { ...d, saving: false, saved: true, error: null } : d))
         );
-        return true;
+        return { voucherId: json.voucherId ?? null };
       } else {
         const err = await res.json();
         setDocuments((prev) =>
@@ -282,7 +286,7 @@ export default function UploadPage() {
               : d
           )
         );
-        return false;
+        return null;
       }
     } catch {
       setDocuments((prev) =>
@@ -290,7 +294,43 @@ export default function UploadPage() {
           d.id === id ? { ...d, saving: false, saved: false, error: "Error saving invoice." } : d
         )
       );
-      return false;
+      return null;
+    }
+  };
+
+  // Save a single document and jump straight to its ledger-mapping screen
+  const saveAndMap = async (id: string) => {
+    const result = await saveSingle(id);
+    if (result?.voucherId) {
+      router.push(`/vouchers/${result.voucherId}`);
+    } else if (result) {
+      router.push("/transactions");
+    }
+  };
+
+  // Bank statement: save the extracted transactions and open its mapping screen
+  const saveBankAndMap = async (id: string) => {
+    const doc = documents.find((d) => d.id === id);
+    if (!doc?.extractedData) return;
+    setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, saving: true, error: null } : d)));
+    try {
+      const res = await fetch("/api/bank-statements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: doc.file.name || "bank-statement", data: doc.extractedData }),
+      });
+      const json = await res.json();
+      if (res.ok && json.statementId) {
+        router.push(`/bank/${json.statementId}`);
+      } else {
+        setDocuments((prev) =>
+          prev.map((d) => (d.id === id ? { ...d, saving: false, error: json.error || "Failed to save" } : d))
+        );
+      }
+    } catch {
+      setDocuments((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, saving: false, error: "Error saving statement." } : d))
+      );
     }
   };
 
@@ -323,7 +363,7 @@ export default function UploadPage() {
     setSavingAll(false);
 
     if (failed === 0) {
-      router.push("/dashboard");
+      router.push("/transactions");
     } else {
       setError(`${failed} document(s) failed to save. Fix errors and try again.`);
     }
@@ -337,7 +377,22 @@ export default function UploadPage() {
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
-      <h2 className="text-3xl font-bold tracking-tight">Bulk Upload & Extract Invoices</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-3xl font-bold tracking-tight">
+          Upload &amp; Extract {docType === "bank" ? "Bank Statements" : "Invoices"}
+        </h2>
+        <div className="flex rounded-lg border overflow-hidden text-sm">
+          {([["invoice", "Invoice"], ["bank", "Bank Statement"]] as const).map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setDocType(val)}
+              className={`px-4 py-2 font-medium ${docType === val ? "bg-gray-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Upload Area */}
       <div
@@ -396,36 +451,38 @@ export default function UploadPage() {
                 </>
               )}
             </Button>
-            <Button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleSaveAll();
-              }}
-              disabled={
-                savingAll ||
-                !documents.length ||
-                extractedCount !== documents.length ||
-                savedCount === documents.length
-              }
-              className="bg-green-600 hover:bg-green-700"
-            >
-              {savingAll ? (
-                <>
-                  <Loader2 className="animate-spin mr-2 h-4 w-4" />
-                  Saving All...
-                </>
-              ) : savedCount === documents.length ? (
-                <>
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  All Saved
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save All Documents
-                </>
-              )}
-            </Button>
+            {docType === "invoice" && (
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSaveAll();
+                }}
+                disabled={
+                  savingAll ||
+                  !documents.length ||
+                  extractedCount !== documents.length ||
+                  savedCount === documents.length
+                }
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {savingAll ? (
+                  <>
+                    <Loader2 className="animate-spin mr-2 h-4 w-4" />
+                    Saving All...
+                  </>
+                ) : savedCount === documents.length ? (
+                  <>
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    All Saved
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" />
+                    Save All Invoices
+                  </>
+                )}
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -473,10 +530,28 @@ export default function UploadPage() {
                     </>
                   ) : (
                     <>
-                      <FileText className="mr-2 h-4 w-4" /> Extract
+                      <FileText className="mr-2 h-4 w-4" /> {doc.extractedData ? "Re-extract" : "Extract"}
                     </>
                   )}
                 </Button>
+                {doc.extractedData && (
+                  <Button
+                    onClick={() => (docType === "bank" ? saveBankAndMap(doc.id) : saveAndMap(doc.id))}
+                    disabled={doc.saving}
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    {doc.saving ? (
+                      <>
+                        <Loader2 className="animate-spin mr-2 h-4 w-4" /> Saving
+                      </>
+                    ) : (
+                      <>
+                        {docType === "bank" ? "Map Transactions" : "Map Ledgers"}{" "}
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </>
+                    )}
+                  </Button>
+                )}
                 <Button variant="outline" onClick={() => removeDocument(doc.id)}>
                   Remove
                 </Button>
@@ -546,6 +621,9 @@ export default function UploadPage() {
                 </div>
 
                 {doc.extractedData ? (
+                  docType === "bank" ? (
+                    <BankSummary data={doc.extractedData} />
+                  ) : (
                   <>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                       <Field label="Invoice Number" value={doc.extractedData.invoice_number} onChange={(v) => handleFieldChange(doc.id, "invoice_number", v)} />
@@ -615,9 +693,10 @@ export default function UploadPage() {
                       </div>
                     )}
                   </>
+                  )
                 ) : (
                   <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-sm text-gray-500">
-                    Extract this document to render editable invoice fields.
+                    Extract this document to render editable fields.
                   </div>
                 )}
               </div>
@@ -669,6 +748,57 @@ function AmountCard({
       <p className="text-xs text-gray-500 uppercase">{label}</p>
       <p className={`text-lg font-bold ${highlight ? "text-blue-700" : "text-gray-900"}`}>
         {display}
+      </p>
+    </div>
+  );
+}
+
+function BankSummary({ data }: { data: any }) {
+  const txns: any[] = Array.isArray(data?.transactions) ? data.transactions : [];
+  const fmt = (n: any) => {
+    const num = typeof n === "number" ? n : parseFloat(n);
+    return isNaN(num) || num === 0 ? "" : `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap gap-3 mb-4 text-sm">
+        <span className="bg-gray-100 px-3 py-1 rounded-full">Bank: {data?.bank_name || "—"}</span>
+        <span className="bg-gray-100 px-3 py-1 rounded-full">A/C: {data?.account_number || "—"}</span>
+        <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full font-medium">
+          {txns.length} transactions
+        </span>
+      </div>
+      <div className="overflow-auto border rounded-lg max-h-80">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-600 sticky top-0">
+            <tr>
+              <th className="px-3 py-2 text-left">Date</th>
+              <th className="px-3 py-2 text-left">Description</th>
+              <th className="px-3 py-2 text-right">Withdrawal</th>
+              <th className="px-3 py-2 text-right">Deposit</th>
+              <th className="px-3 py-2 text-right">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {txns.map((t, i) => (
+              <tr key={i} className="border-t">
+                <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{t.date || "—"}</td>
+                <td className="px-3 py-2">{t.description || "—"}</td>
+                <td className="px-3 py-2 text-right text-red-600">{fmt(t.withdrawal)}</td>
+                <td className="px-3 py-2 text-right text-green-600">{fmt(t.deposit)}</td>
+                <td className="px-3 py-2 text-right text-gray-500">{fmt(t.balance)}</td>
+              </tr>
+            ))}
+            {txns.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-3 py-6 text-center text-gray-400">No transactions detected.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-gray-500 mt-2">
+        Click <strong>Map Transactions</strong> to assign a ledger to each row and send to Tally.
       </p>
     </div>
   );

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, UploadCloud, MessageSquare, LogOut, ClipboardCheck, BookOpen } from "lucide-react";
+import { LayoutDashboard, UploadCloud, MessageSquare, LogOut, BookOpen, ListChecks } from "lucide-react";
 import { cn } from "@/lib/utils"; // Shadcn utility
 import { SignOutButton } from "@clerk/nextjs";
 
@@ -14,15 +14,15 @@ const routes = [
     color: "text-sky-500",
   },
   {
-    label: "Upload Invoice",
+    label: "Upload",
     icon: UploadCloud,
     href: "/upload",
     color: "text-violet-500",
   },
   {
-    label: "Vouchers",
-    icon: ClipboardCheck,
-    href: "/vouchers",
+    label: "Transactions",
+    icon: ListChecks,
+    href: "/transactions",
     color: "text-emerald-500",
   },
   {

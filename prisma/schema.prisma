@@ -22,6 +22,7 @@ model User {
   ledgerMappings LedgerMapping[]
   mappingRules   MappingRule[]
   vouchers       Voucher[]
+  bankStatements BankStatement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -99,6 +100,7 @@ model Ledger {
   mappings     LedgerMapping[]
   ruleTargets  MappingRule[]
   voucherLines VoucherLine[]
+  bankTxns     BankTxn[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -272,6 +274,51 @@ enum MappedVia {
   FUZZY
   MANUAL
   DEFAULT
+}
+
+// ===================================================================
+// Bank statements (V1) — extract rows, map each to a contra ledger
+// ===================================================================
+
+model BankStatement {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  clientId      String   @default("")
+
+  fileName      String
+  bankName      String?
+  accountNumber String?
+  bankLedgerId  String? // the Bank ledger (the other side of each entry)
+  status        String   @default("DRAFT") // DRAFT | SYNCED
+
+  txns          BankTxn[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model BankTxn {
+  id          String        @id @default(uuid())
+  statementId String
+  statement   BankStatement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+
+  date        DateTime?
+  description String
+  refNo       String?
+  withdrawal  Float    @default(0) // money out (debit in statement)
+  deposit     Float    @default(0) // money in  (credit in statement)
+  balance     Float?
+
+  ledgerId           String? // contra ledger (nullable = unmapped)
+  ledger             Ledger?  @relation(fields: [ledgerId], references: [id])
+  ledgerNameSnapshot String?
+  sortOrder          Int      @default(0)
+
+  @@index([statementId])
+  @@index([ledgerId])
 }
 
 enum Plan {
