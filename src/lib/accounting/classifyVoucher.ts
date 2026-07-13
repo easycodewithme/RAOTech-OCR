@@ -14,6 +14,8 @@ export function classifyVoucher(
 ): VoucherType {
   const h = (hint ?? "").trim().toUpperCase();
   if (h === "SALE" || h === "SALES" || h === "OUTWARD") return "SALE";
+  if (h === "CREDIT_NOTE" || h === "CREDITNOTE" || h === "CN") return "CREDIT_NOTE";
+  if (h === "DEBIT_NOTE" || h === "DEBITNOTE" || h === "DN") return "DEBIT_NOTE";
   if (h === "PURCHASE" || h === "INWARD" || h === "EXPENSE") return "PURCHASE";
   return "PURCHASE";
 }

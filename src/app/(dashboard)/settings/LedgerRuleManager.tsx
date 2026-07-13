@@ -46,9 +46,13 @@ const RULE_TYPES = [
 export default function LedgerRuleManager({
   ledgers: initialLedgers,
   rules: initialRules,
+  clientName,
+  mappingAccuracy,
 }: {
   ledgers: Ledger[];
   rules: Rule[];
+  clientName?: string;
+  mappingAccuracy?: number | null;
 }) {
   const [tab, setTab] = useState<"ledgers" | "rules">("ledgers");
   const [ledgers, setLedgers] = useState<Ledger[]>(initialLedgers);
@@ -56,9 +60,20 @@ export default function LedgerRuleManager({
 
   return (
     <div className="p-6 md:p-10 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Ledgers &amp; Rules</h1>
-        <p className="text-gray-500 text-sm mt-1">Manage your chart of accounts and auto-mapping rules</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Ledgers &amp; Rules</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            {clientName ? `${clientName} · ` : ""}Chart of accounts and auto-mapping rules
+          </p>
+        </div>
+        {mappingAccuracy != null && (
+          <div className="rounded-xl border bg-emerald-50 border-emerald-100 px-4 py-2 text-sm">
+            <div className="text-xs text-emerald-600 uppercase font-semibold">Mapping accuracy</div>
+            <div className="text-xl font-bold text-emerald-800">{mappingAccuracy}%</div>
+            <div className="text-xs text-emerald-700">auto-mapped lines this client</div>
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2">
@@ -175,6 +190,18 @@ function RulesTab({
   const [pattern, setPattern] = useState("");
   const [ledgerId, setLedgerId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [previewCount, setPreviewCount] = useState<number | null>(null);
+
+  async function preview() {
+    if (!pattern.trim() || !ledgerId) return;
+    const res = await fetch("/api/mapping-rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ruleType, pattern, ledgerId, preview: true, previewOnly: true }),
+    });
+    const data = await res.json();
+    if (res.ok) setPreviewCount(data.previewCount ?? 0);
+  }
 
   async function add() {
     if (!pattern.trim() || !ledgerId) return;
@@ -183,13 +210,14 @@ function RulesTab({
       const res = await fetch("/api/mapping-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ruleType, pattern, ledgerId }),
+        body: JSON.stringify({ ruleType, pattern, ledgerId, preview: true }),
       });
       const data = await res.json();
       if (res.ok && data.rule) {
         setRules([...rules, data.rule]);
         setPattern("");
         setLedgerId(null);
+        setPreviewCount(data.previewCount ?? null);
       }
     } finally {
       setSaving(false);
@@ -232,10 +260,20 @@ function RulesTab({
           <label className="text-xs text-gray-500">Map to ledger</label>
           <LedgerSelect ledgers={ledgers} value={ledgerId} onChange={setLedgerId} />
         </div>
-        <Button onClick={add} disabled={saving || !pattern.trim() || !ledgerId}>
-          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-          Add Rule
-        </Button>
+        <div className="flex flex-wrap gap-2 items-center">
+          <Button variant="outline" onClick={preview} disabled={!pattern.trim() || !ledgerId}>
+            Test / Preview
+          </Button>
+          <Button onClick={add} disabled={saving || !pattern.trim() || !ledgerId}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+            Add Rule
+          </Button>
+          {previewCount != null && (
+            <span className="text-sm text-gray-600">
+              Would match <strong>{previewCount}</strong> past invoice(s)
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="border rounded-xl bg-white shadow-sm overflow-hidden">

@@ -1,92 +1,85 @@
 import { currentUser } from "@clerk/nextjs/server";
 import {
-  FileText,
   Plus,
-  IndianRupee,
-  Building2,
   Download,
   ClipboardList,
-  ClipboardCheck,
-  ArrowDownToLine,
-  ArrowUpFromLine,
+  AlertTriangle,
+  IndianRupee,
+  Send,
+  Users,
+  Scale,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 
 export default async function Dashboard() {
   const clerk = await currentUser();
   if (!clerk) return redirect("/sign-in");
 
-  let dbUser;
-  try {
-    dbUser = await getDbUser();
-  } catch (error: any) {
-    console.error("[DASHBOARD_DB_ERROR]", error?.message || error);
-    return (
-      <div className="p-10 text-center">
-        <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
-        <p className="text-gray-500">Unable to connect to database. Please try again in a moment.</p>
-        <p className="text-xs text-red-400 mt-2">{error?.message || "Unknown error"}</p>
-      </div>
-    );
-  }
-  if (!dbUser) return redirect("/sign-in");
+  const ctx = await getActiveClient();
+  if (!ctx) return redirect("/sign-in");
+  const { user, client } = ctx;
 
-  const [invoices, vouchers] = await Promise.all([
-    prisma.invoice.findMany({ where: { userId: dbUser.id }, orderBy: { createdAt: "desc" } }),
+  const [invoices, vouchers, latestRecon, unmappedParties] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { userId: user.id, clientId: client.id },
+      orderBy: { createdAt: "desc" },
+    }),
     prisma.voucher.findMany({
-      where: { userId: dbUser.id, clientId: "" },
+      where: { userId: user.id, clientId: client.id },
       orderBy: { createdAt: "desc" },
       include: {
         invoice: { select: { vendor: true, invoiceNumber: true, taxAmount: true } },
-        lines: { select: { ledgerId: true } },
+        lines: { select: { ledgerId: true, role: true } },
+      },
+    }),
+    prisma.gst2bUpload.findFirst({
+      where: { userId: user.id, clientId: client.id },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.voucherLine.count({
+      where: {
+        ledgerId: null,
+        role: "PARTY",
+        voucher: { userId: user.id, clientId: client.id, status: "DRAFT" },
       },
     }),
   ]);
 
   const drafts = vouchers.filter((v) => v.status === "DRAFT");
   const approved = vouchers.filter((v) => v.status === "APPROVED");
+  const exported = vouchers.filter((v) => v.status === "EXPORTED_DEMO" || v.status === "POSTED");
+  const pendingReview = drafts.filter((v) => v.lines.some((l) => l.ledgerId === null) || (v.avgConfidence ?? 1) < 0.7);
   const gstInput = vouchers
     .filter((v) => v.voucherType === "PURCHASE")
     .reduce((s, v) => s + (v.invoice?.taxAmount || 0), 0);
   const gstOutput = vouchers
     .filter((v) => v.voucherType === "SALE")
     .reduce((s, v) => s + (v.invoice?.taxAmount || 0), 0);
-  const totalAmount = invoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
+  const itcAtStake = latestRecon?.itcAtRisk ?? 0;
+  const gstLiability = Math.max(0, gstOutput - gstInput);
 
-  // Vendor breakdown (kept from the previous dashboard)
-  const vendorMap: Record<string, { count: number; total: number; tax: number }> = {};
-  for (const inv of invoices) {
-    const v = inv.vendor || "Unknown";
-    if (!vendorMap[v]) vendorMap[v] = { count: 0, total: 0, tax: 0 };
-    vendorMap[v].count += 1;
-    vendorMap[v].total += inv.totalAmount || 0;
-    vendorMap[v].tax += inv.taxAmount || 0;
-  }
-  const topVendors = Object.entries(vendorMap)
-    .map(([name, data]) => ({ name, ...data }))
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 10);
-
-  const reviewList = drafts.map((v) => ({
+  const reviewList = drafts.slice(0, 20).map((v) => ({
     id: v.id,
     vendor: v.invoice?.vendor ?? "Unknown",
     invoiceNumber: v.invoice?.invoiceNumber ?? "—",
     type: v.voucherType,
     amount: v.totalDebit,
     hasUnmapped: v.lines.some((l) => l.ledgerId === null),
+    confidence: v.avgConfidence,
   }));
 
   return (
     <div className="p-6 md:p-10 space-y-8">
-      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-1">Welcome back, {clerk.firstName || "User"}</p>
+          <p className="text-gray-500 text-sm mt-1">
+            {client.name} · Welcome back, {clerk.firstName || "User"}
+          </p>
         </div>
         <div className="flex gap-3">
           <a href="/api/export?format=csv">
@@ -103,68 +96,72 @@ export default async function Dashboard() {
         </div>
       </div>
 
-      {/* Stats Cards — voucher-centric */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           icon={<ClipboardList className="h-5 w-5 text-yellow-600" />}
-          label="Drafts to Review"
-          value={drafts.length.toString()}
+          label="Pending Review"
+          value={pendingReview.length.toString()}
           bg="bg-yellow-50"
-          href="/vouchers"
+          href="/review"
         />
         <StatCard
-          icon={<ClipboardCheck className="h-5 w-5 text-emerald-600" />}
-          label="Approved Vouchers"
+          icon={<Scale className="h-5 w-5 text-orange-600" />}
+          label="ITC at Stake"
+          value={`₹${itcAtStake.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          bg="bg-orange-50"
+          href="/gst"
+        />
+        <StatCard
+          icon={<IndianRupee className="h-5 w-5 text-purple-600" />}
+          label="GST Liability (est.)"
+          value={`₹${gstLiability.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          bg="bg-purple-50"
+        />
+        <StatCard
+          icon={<Users className="h-5 w-5 text-red-600" />}
+          label="Unmapped Parties"
+          value={unmappedParties.toString()}
+          bg="bg-red-50"
+          href="/transactions"
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          icon={<AlertTriangle className="h-5 w-5 text-amber-600" />}
+          label="Draft Vouchers"
+          value={drafts.length.toString()}
+          bg="bg-amber-50"
+        />
+        <StatCard
+          icon={<Send className="h-5 w-5 text-emerald-600" />}
+          label="Ready to Export"
           value={approved.length.toString()}
           bg="bg-emerald-50"
           valueColor="text-emerald-600"
         />
         <StatCard
-          icon={<ArrowDownToLine className="h-5 w-5 text-blue-600" />}
-          label="GST Input (Purchases)"
-          value={`₹${gstInput.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-          bg="bg-blue-50"
-        />
-        <StatCard
-          icon={<ArrowUpFromLine className="h-5 w-5 text-purple-600" />}
-          label="GST Output (Sales)"
-          value={`₹${gstOutput.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-          bg="bg-purple-50"
-        />
-      </div>
-
-      {/* Secondary stats */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <StatCard
-          icon={<FileText className="h-5 w-5 text-sky-600" />}
-          label="Total Vouchers"
-          value={vouchers.length.toString()}
+          icon={<Download className="h-5 w-5 text-sky-600" />}
+          label="Exported (demo)"
+          value={exported.length.toString()}
           bg="bg-sky-50"
         />
         <StatCard
-          icon={<IndianRupee className="h-5 w-5 text-green-600" />}
-          label="Total Invoiced"
-          value={`₹${totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-          bg="bg-green-50"
-          valueColor="text-green-600"
-        />
-        <StatCard
-          icon={<Building2 className="h-5 w-5 text-orange-600" />}
-          label="Unique Vendors"
-          value={Object.keys(vendorMap).length.toString()}
-          bg="bg-orange-50"
+          icon={<ClipboardList className="h-5 w-5 text-blue-600" />}
+          label="Invoices"
+          value={invoices.length.toString()}
+          bg="bg-blue-50"
         />
       </div>
 
-      {/* Two Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Vouchers to review (2/3 width) */}
         <div className="lg:col-span-2 border rounded-xl bg-white shadow-sm overflow-hidden">
           <div className="p-5 border-b bg-gray-50/50 flex justify-between items-center">
             <h3 className="font-semibold">Vouchers to Review</h3>
-            <span className="text-xs text-gray-500">{drafts.length} pending</span>
+            <Link href="/review" className="text-xs text-blue-600 hover:underline">
+              Open review queue
+            </Link>
           </div>
-
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className="text-gray-500 bg-gray-50 uppercase text-xs">
@@ -184,26 +181,26 @@ export default async function Dashboard() {
                     </td>
                   </tr>
                 )}
-                {reviewList.slice(0, 20).map((v) => (
-                  <tr key={v.id} className="border-b hover:bg-gray-50 transition group">
+                {reviewList.map((v) => (
+                  <tr key={v.id} className="border-b hover:bg-gray-50 transition">
                     <td className="px-4 py-3 font-medium">
-                      <Link
-                        href={`/vouchers/${v.id}`}
-                        className="flex items-center gap-2 text-blue-600 group-hover:text-blue-800"
-                      >
-                        <FileText className="h-4 w-4" />
+                      <Link href={`/vouchers/${v.id}`} className="text-blue-600 hover:underline">
                         {v.vendor}
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-gray-600">{v.invoiceNumber}</td>
                     <td className="px-4 py-3 text-gray-600">{v.type}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-gray-900">
+                    <td className="px-4 py-3 text-right font-semibold">
                       ₹{v.amount.toLocaleString("en-IN")}
                     </td>
                     <td className="px-4 py-3">
                       {v.hasUnmapped ? (
                         <span className="px-2 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">
                           Needs ledger
+                        </span>
+                      ) : (v.confidence ?? 1) < 0.7 ? (
+                        <span className="px-2 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-700">
+                          Low confidence
                         </span>
                       ) : (
                         <span className="px-2 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700">
@@ -218,33 +215,32 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Top Vendors (1/3 width) */}
-        <div className="border rounded-xl bg-white shadow-sm overflow-hidden">
-          <div className="p-5 border-b bg-gray-50/50">
-            <h3 className="font-semibold">Top Vendors</h3>
-          </div>
-          <div className="divide-y">
-            {topVendors.length === 0 && (
-              <div className="p-6 text-center text-gray-400 text-sm">No vendor data yet</div>
-            )}
-            {topVendors.map((v, i) => (
-              <div key={v.name} className="px-4 py-3 hover:bg-gray-50 transition">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400 w-5">{i + 1}.</span>
-                    <span className="font-medium text-sm text-gray-800 truncate max-w-[140px]">{v.name}</span>
-                  </div>
-                  <span className="font-semibold text-sm">₹{v.total.toLocaleString("en-IN")}</span>
-                </div>
-                <div className="flex justify-between mt-1 ml-7">
-                  <span className="text-xs text-gray-400">
-                    {v.count} invoice{v.count > 1 ? "s" : ""}
-                  </span>
-                  <span className="text-xs text-gray-400">Tax: ₹{v.tax.toLocaleString("en-IN")}</span>
-                </div>
+        <div className="border rounded-xl bg-white shadow-sm p-5 space-y-4">
+          <h3 className="font-semibold">Quick actions</h3>
+          <Link href="/gst" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
+            Run GST reconciliation (GSTR-2B)
+          </Link>
+          <Link href="/pipeline" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
+            View pipeline board
+          </Link>
+          <Link href="/reports" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
+            GST summary &amp; reports
+          </Link>
+          <Link
+            href="/transactions"
+            className="block rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 font-medium"
+          >
+            Export approved vouchers to Tally XML
+          </Link>
+          {latestRecon && (
+            <div className="rounded-lg bg-orange-50 border border-orange-100 p-3 text-sm">
+              <div className="font-medium text-orange-800">Latest 2B recon</div>
+              <div className="text-orange-700 mt-1">
+                {latestRecon.matched} matched · {latestRecon.mismatched} mismatch · ITC at risk ₹
+                {latestRecon.itcAtRisk.toLocaleString("en-IN")}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -279,3 +275,4 @@ function StatCard({
   );
   return href ? <Link href={href}>{card}</Link> : card;
 }
+

@@ -18,7 +18,12 @@ import type { VoucherType } from "./types";
 export async function createDraftVoucherForInvoice(
   userId: string,
   invoiceId: string,
-  opts: { voucherTypeOverride?: VoucherType } = {}
+  opts: {
+    voucherTypeOverride?: VoucherType;
+    partyLedgerId?: string | null;
+    forceNewParty?: boolean;
+    clientId?: string;
+  } = {}
 ) {
   const invoice = await prisma.invoice.findFirst({
     where: { id: invoiceId, userId },
@@ -27,23 +32,41 @@ export async function createDraftVoucherForInvoice(
   if (!invoice) throw new Error("Invoice not found");
 
   if (invoice.voucher && invoice.voucher.status !== "DRAFT") {
-    return invoice.voucher; // don't disturb approved/posted vouchers
+    return invoice.voucher;
   }
 
-  // Ensure the chart of accounts exists for this workspace
-  await seedLedgersForUser(prisma, userId);
+  const clientId = opts.clientId || invoice.clientId;
+  if (!clientId) throw new Error("clientId is required");
+
+  await seedLedgersForUser(prisma, userId, clientId);
 
   const extracted = (invoice.extractedData as Record<string, unknown>) ?? {};
   const inv = normalizeInvoice(extracted);
   const voucherType =
     opts.voucherTypeOverride ?? classifyVoucher(inv, invoice.documentType);
 
-  const resolved = await resolveLedgersForInvoice(prisma, userId, inv, voucherType);
+  const resolved = await resolveLedgersForInvoice(prisma, userId, inv, voucherType, clientId);
+
+  if (opts.forceNewParty) {
+    resolved.party = null;
+  } else if (opts.partyLedgerId) {
+    const chosen = await prisma.ledger.findFirst({
+      where: { id: opts.partyLedgerId, userId, clientId },
+      select: { id: true, name: true },
+    });
+    if (chosen) {
+      resolved.party = { id: chosen.id, name: chosen.name, confidence: 1, via: "MANUAL" };
+    }
+  }
+
   const draft = buildVoucher(inv, resolved, voucherType, {
     narration: invoice.invoiceNumber ? `Inv ${invoice.invoiceNumber}` : null,
   });
 
-  // Replace any existing DRAFT voucher for this invoice
+  const confidences = draft.lines.map((l) => l.confidence).filter((c): c is number => c != null);
+  const avgConfidence =
+    confidences.length > 0 ? confidences.reduce((a, b) => a + b, 0) / confidences.length : null;
+
   const result = await prisma.$transaction(async (tx) => {
     if (invoice.voucher) {
       await tx.voucherLine.deleteMany({ where: { voucherId: invoice.voucher.id } });
@@ -52,7 +75,7 @@ export async function createDraftVoucherForInvoice(
     return tx.voucher.create({
       data: {
         userId,
-        clientId: "",
+        clientId,
         invoiceId: invoice.id,
         voucherType: draft.voucherType,
         status: "DRAFT",
@@ -61,6 +84,7 @@ export async function createDraftVoucherForInvoice(
         totalDebit: draft.totalDebit,
         totalCredit: draft.totalCredit,
         roundOff: draft.roundOff,
+        avgConfidence,
         lines: {
           create: draft.lines.map((l) => ({
             ledgerId: l.ledgerId,

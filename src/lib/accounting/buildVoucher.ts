@@ -37,8 +37,12 @@ export function buildVoucher(
   opts: BuildOptions = {}
 ): VoucherDraft {
   const tolerancePaise = toPaise(opts.roundingTolerance ?? 1.0);
-  const isPurchase = voucherType === "PURCHASE";
-  // On purchase, non-party lines are debits; on sale, they are credits.
+  // PURCHASE / vendor CREDIT_NOTE (purchase return inverted at classify) —
+  // party credited for purchase; party debited for sale / debit note.
+  const isPurchase =
+    voucherType === "PURCHASE" ||
+    voucherType === "CREDIT_NOTE" ||
+    voucherType === "PAYMENT";
   const nonPartyDebit = isPurchase;
 
   const lines: VoucherLineDraft[] = [];

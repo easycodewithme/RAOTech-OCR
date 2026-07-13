@@ -2,9 +2,10 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 // Define routes that are public (do not require login)
 const isPublicRoute = createRouteMatcher([
-  "/", 
-  "/sign-in(.*)", 
-  "/sign-up(.*)"
+  "/",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/intake(.*)",
 ]);
 
 // Note: The function is now 'async' and we use 'await auth.protect()'

@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 import { rememberMapping } from "@/lib/accounting/rememberMapping";
 import { normGstin } from "@/lib/accounting/normalize";
 
-// POST /api/vouchers/[voucherId]/approve — gate: all lines mapped + balanced
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ voucherId: string }> }
 ) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
     const { voucherId } = await params;
 
     const voucher = await prisma.voucher.findFirst({
-      where: { id: voucherId, userId: user.id },
+      where: { id: voucherId, userId: user.id, clientId: client.id },
       include: { lines: true, invoice: true },
     });
     if (!voucher) return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
@@ -46,14 +46,14 @@ export async function POST(
       data: { status: "APPROVED", approvedAt: new Date(), approvedBy: user.id },
     });
 
-    // Learn the party mapping from the approved voucher
     const partyLine = voucher.lines.find((l) => l.role === "PARTY");
     if (partyLine?.ledgerId && voucher.invoice) {
       await rememberMapping(
         prisma,
         user.id,
         { vendor: voucher.invoice.vendor, vendorGstin: normGstin(voucher.invoice.vendorGstin) },
-        partyLine.ledgerId
+        partyLine.ledgerId,
+        client.id
       );
     }
 

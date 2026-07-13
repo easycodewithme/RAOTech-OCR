@@ -14,7 +14,7 @@ type Message = {
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Hello! I am RAO AI. Ask me anything about your invoices." }
+    { role: "assistant", content: "Hello! I am RAO AI. Ask about this client's ITC, drafts, vendors, or reconciliation." }
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);

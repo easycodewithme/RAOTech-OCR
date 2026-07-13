@@ -1,30 +1,36 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 import { createDraftVoucherForInvoice } from "@/lib/accounting/createVoucher";
 import type { VoucherType } from "@/lib/accounting/types";
 
-// GET /api/vouchers?status=DRAFT&type=PURCHASE — list vouchers for the queue
 export async function GET(req: Request) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const url = new URL(req.url);
     const status = url.searchParams.get("status");
     const type = url.searchParams.get("type");
+    const confidence = url.searchParams.get("confidence"); // low | high
 
     const vouchers = await prisma.voucher.findMany({
       where: {
         userId: user.id,
-        clientId: "",
+        clientId: client.id,
         ...(status ? { status: status as any } : {}),
         ...(type ? { voucherType: type as any } : {}),
+        ...(confidence === "low"
+          ? { OR: [{ avgConfidence: { lt: 0.7 } }, { avgConfidence: null }] }
+          : confidence === "high"
+            ? { avgConfidence: { gte: 0.9 } }
+            : {}),
       },
       orderBy: { createdAt: "desc" },
       include: {
-        invoice: { select: { id: true, vendor: true, invoiceNumber: true } },
-        lines: { select: { ledgerId: true } },
+        invoice: { select: { id: true, vendor: true, invoiceNumber: true, isDuplicate: true } },
+        lines: { select: { ledgerId: true, confidence: true } },
       },
     });
 
@@ -39,11 +45,11 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/vouchers  { invoiceId, voucherType? } — create/rebuild a DRAFT voucher
 export async function POST(req: Request) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const body = await req.json();
     const invoiceId = String(body.invoiceId ?? "");
@@ -51,6 +57,7 @@ export async function POST(req: Request) {
 
     const voucher = await createDraftVoucherForInvoice(user.id, invoiceId, {
       voucherTypeOverride: body.voucherType as VoucherType | undefined,
+      clientId: client.id,
     });
     return NextResponse.json({ voucher });
   } catch (error) {

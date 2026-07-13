@@ -1,34 +1,43 @@
 import { NextResponse } from "next/server";
-import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
+import { getActiveClient } from "@/lib/clientContext";
 
 export async function GET(req: Request) {
   try {
-    const user = await currentUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const email = user.emailAddresses[0]?.emailAddress;
-    const dbUser = await prisma.user.findUnique({
-      where: { email },
-      include: { invoices: { orderBy: { createdAt: "desc" } } },
-    });
-
-    if (!dbUser || dbUser.invoices.length === 0) {
-      return NextResponse.json({ error: "No invoices to export" }, { status: 404 });
-    }
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const { searchParams } = new URL(req.url);
     const format = searchParams.get("format") || "csv";
 
+    const invoices = await prisma.invoice.findMany({
+      where: { userId: user.id, clientId: client.id },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!invoices.length) {
+      return NextResponse.json({ error: "No invoices to export" }, { status: 404 });
+    }
+
     if (format === "csv") {
       const headers = [
-        "Invoice #", "Vendor", "Vendor GSTIN", "Date", "Subtotal",
-        "CGST", "SGST", "IGST", "Tax", "Total Amount", "GST Valid", "Status"
+        "Invoice #",
+        "Vendor",
+        "Vendor GSTIN",
+        "Date",
+        "Subtotal",
+        "CGST",
+        "SGST",
+        "IGST",
+        "Tax",
+        "Total Amount",
+        "GST Valid",
+        "Status",
+        "Doc Type",
       ];
 
-      const rows = dbUser.invoices.map((inv) => [
+      const rows = invoices.map((inv) => [
         inv.invoiceNumber || "",
         inv.vendor || "",
         inv.vendorGstin || "",
@@ -41,6 +50,7 @@ export async function GET(req: Request) {
         inv.totalAmount ?? "",
         inv.gstValid != null ? (inv.gstValid ? "Valid" : "Invalid") : "",
         inv.status,
+        inv.documentType || "",
       ]);
 
       const csvContent = [
@@ -51,18 +61,17 @@ export async function GET(req: Request) {
       return new Response(csvContent, {
         headers: {
           "Content-Type": "text/csv",
-          "Content-Disposition": `attachment; filename=invoices_${new Date().toISOString().slice(0, 10)}.csv`,
+          "Content-Disposition": `attachment; filename=invoices_${client.name.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.csv`,
         },
       });
     }
 
-    // JSON export
     return NextResponse.json({
       exported_at: new Date().toISOString(),
-      total: dbUser.invoices.length,
-      invoices: dbUser.invoices,
+      client: client.name,
+      total: invoices.length,
+      invoices,
     });
-
   } catch (error) {
     console.error("[EXPORT_ERROR]", error);
     return NextResponse.json({ error: "Export failed" }, { status: 500 });

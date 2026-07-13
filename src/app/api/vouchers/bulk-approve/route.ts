@@ -1,22 +1,21 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 import { rememberMapping } from "@/lib/accounting/rememberMapping";
 import { normGstin } from "@/lib/accounting/normalize";
 
-// POST /api/vouchers/bulk-approve  { voucherIds: string[] }
-// Approves all eligible drafts (fully mapped + balanced); skips the rest.
 export async function POST(req: Request) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const body = await req.json();
     const ids: string[] = Array.isArray(body.voucherIds) ? body.voucherIds : [];
     if (ids.length === 0) return NextResponse.json({ approved: 0, skipped: [] });
 
     const vouchers = await prisma.voucher.findMany({
-      where: { id: { in: ids }, userId: user.id, status: "DRAFT" },
+      where: { id: { in: ids }, userId: user.id, clientId: client.id, status: "DRAFT" },
       include: { lines: true, invoice: true },
     });
 
@@ -32,6 +31,11 @@ export async function POST(req: Request) {
         skipped.push({ id: v.id, reason: "unbalanced" });
         continue;
       }
+      // Auto-approve high confidence if requested
+      if (body.onlyHighConfidence && (v.avgConfidence ?? 0) < 0.9) {
+        skipped.push({ id: v.id, reason: "low confidence" });
+        continue;
+      }
       await prisma.voucher.update({
         where: { id: v.id },
         data: { status: "APPROVED", approvedAt: new Date(), approvedBy: user.id },
@@ -42,7 +46,8 @@ export async function POST(req: Request) {
           prisma,
           user.id,
           { vendor: v.invoice.vendor, vendorGstin: normGstin(v.invoice.vendorGstin) },
-          partyLine.ledgerId
+          partyLine.ledgerId,
+          client.id
         );
       }
       approved++;

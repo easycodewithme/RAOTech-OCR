@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 
-// PATCH /api/mapping-rules/[ruleId] — toggle enabled / change priority
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ ruleId: string }> }
 ) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
     const { ruleId } = await params;
 
     const existing = await prisma.mappingRule.findFirst({
-      where: { id: ruleId, userId: user.id },
+      where: { id: ruleId, userId: user.id, clientId: client.id },
     });
     if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 
@@ -33,18 +33,18 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/mapping-rules/[ruleId]
 export async function DELETE(
-  req: Request,
+  _req: Request,
   { params }: { params: Promise<{ ruleId: string }> }
 ) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
     const { ruleId } = await params;
 
     const existing = await prisma.mappingRule.findFirst({
-      where: { id: ruleId, userId: user.id },
+      where: { id: ruleId, userId: user.id, clientId: client.id },
     });
     if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 

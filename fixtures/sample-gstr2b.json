@@ -1,0 +1,52 @@
+/**
+ * Sample GSTR-2B JSON for prototype demos.
+ * Upload via GST Recon page or POST /api/gst/2b
+ */
+{
+  "docdata": {
+    "b2b": [
+      {
+        "ctin": "27AABCT1234H1Z0",
+        "trdnm": "Acme Traders Pvt Ltd",
+        "inv": [
+          {
+            "inum": "INV-1001",
+            "idt": "05/06/2026",
+            "txval": 10000,
+            "camt": 900,
+            "samt": 900,
+            "iamt": 0,
+            "csamt": 0,
+            "inv_typ": "R"
+          },
+          {
+            "inum": "INV-1002",
+            "idt": "12/06/2026",
+            "txval": 5000,
+            "camt": 0,
+            "samt": 0,
+            "iamt": 900,
+            "csamt": 0,
+            "inv_typ": "R"
+          }
+        ]
+      },
+      {
+        "ctin": "29AABCU9603R1ZM",
+        "trdnm": "Southern Supplies",
+        "inv": [
+          {
+            "inum": "SS-778",
+            "idt": "18/06/2026",
+            "txval": 25000,
+            "camt": 0,
+            "samt": 0,
+            "iamt": 4500,
+            "csamt": 0,
+            "inv_typ": "R"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 import { createDraftVoucherForInvoice } from "@/lib/accounting/createVoucher";
 import { rememberMapping } from "@/lib/accounting/rememberMapping";
 import { normGstin } from "@/lib/accounting/normalize";
 import type { VoucherType } from "@/lib/accounting/types";
 
-async function loadOwnedVoucher(userId: string, voucherId: string) {
+async function loadOwnedVoucher(userId: string, clientId: string, voucherId: string) {
   return prisma.voucher.findFirst({
-    where: { id: voucherId, userId },
+    where: { id: voucherId, userId, clientId },
     include: {
       lines: { orderBy: { sortOrder: "asc" } },
       invoice: true,
@@ -16,17 +16,17 @@ async function loadOwnedVoucher(userId: string, voucherId: string) {
   });
 }
 
-// GET /api/vouchers/[voucherId]
 export async function GET(
-  req: Request,
+  _req: Request,
   { params }: { params: Promise<{ voucherId: string }> }
 ) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
     const { voucherId } = await params;
 
-    const voucher = await loadOwnedVoucher(user.id, voucherId);
+    const voucher = await loadOwnedVoucher(user.id, client.id, voucherId);
     if (!voucher) return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
 
     return NextResponse.json({
@@ -38,22 +38,17 @@ export async function GET(
   }
 }
 
-/**
- * PATCH /api/vouchers/[voucherId]
- *  - { voucherType }            -> rebuild the draft with a new type
- *  - { lines: [{id, ledgerId}], narration? } -> remap line ledgers (MANUAL),
- *    remembering the party mapping for future invoices.
- */
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ voucherId: string }> }
 ) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
     const { voucherId } = await params;
 
-    const voucher = await loadOwnedVoucher(user.id, voucherId);
+    const voucher = await loadOwnedVoucher(user.id, client.id, voucherId);
     if (!voucher) return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
     if (voucher.status !== "DRAFT") {
       return NextResponse.json({ error: "Only draft vouchers can be edited" }, { status: 409 });
@@ -61,25 +56,23 @@ export async function PATCH(
 
     const body = await req.json();
 
-    // Mode 1: change the voucher type -> full rebuild
     if (body.voucherType) {
       const rebuilt = await createDraftVoucherForInvoice(user.id, voucher.invoiceId, {
         voucherTypeOverride: body.voucherType as VoucherType,
+        clientId: client.id,
       });
       return NextResponse.json({ voucher: rebuilt });
     }
 
-    // Mode 2: remap line ledgers
     const lineUpdates: Array<{ id: string; ledgerId: string | null }> = body.lines ?? [];
     const validLineIds = new Set(voucher.lines.map((l) => l.id));
 
-    // Cache ledger names for snapshots and validate ownership
     const requestedLedgerIds = lineUpdates
       .map((u) => u.ledgerId)
       .filter((id): id is string => !!id);
     const ledgers = requestedLedgerIds.length
       ? await prisma.ledger.findMany({
-          where: { id: { in: requestedLedgerIds }, userId: user.id },
+          where: { id: { in: requestedLedgerIds }, userId: user.id, clientId: client.id },
           select: { id: true, name: true },
         })
       : [];
@@ -107,7 +100,6 @@ export async function PATCH(
       }
     });
 
-    // Remember the party mapping so future invoices auto-map
     const partyLine = voucher.lines.find((l) => l.role === "PARTY");
     const partyUpdate = lineUpdates.find((u) => u.id === partyLine?.id);
     if (partyUpdate?.ledgerId && voucher.invoice) {
@@ -118,11 +110,12 @@ export async function PATCH(
           vendor: voucher.invoice.vendor,
           vendorGstin: normGstin(voucher.invoice.vendorGstin),
         },
-        partyUpdate.ledgerId
+        partyUpdate.ledgerId,
+        client.id
       );
     }
 
-    const updated = await loadOwnedVoucher(user.id, voucherId);
+    const updated = await loadOwnedVoucher(user.id, client.id, voucherId);
     return NextResponse.json({
       voucher: { ...updated, hasUnmapped: updated!.lines.some((l) => l.ledgerId === null) },
     });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import { Check, ChevronsUpDown, Plus, Loader2 } from "lucide-react";
 
 export interface LedgerOption {
@@ -10,27 +10,54 @@ export interface LedgerOption {
   ledgerType?: string;
 }
 
+export type LedgerSelectHandle = {
+  focusOpen: () => void;
+};
+
 /**
  * Searchable ledger picker with inline "create ledger". Calls POST /api/ledgers
  * to create on the fly and reports the new ledger back to the parent.
  */
-export function LedgerSelect({
-  ledgers,
-  value,
-  onChange,
-  onCreated,
-  placeholder = "Select ledger…",
-}: {
-  ledgers: LedgerOption[];
-  value: string | null;
-  onChange: (ledgerId: string) => void;
-  onCreated?: (ledger: LedgerOption) => void;
-  placeholder?: string;
-}) {
+export const LedgerSelect = forwardRef<
+  LedgerSelectHandle,
+  {
+    ledgers: LedgerOption[];
+    value: string | null;
+    onChange: (ledgerId: string) => void;
+    onCreated?: (ledger: LedgerOption) => void;
+    placeholder?: string;
+  }
+>(function LedgerSelect(
+  {
+    ledgers,
+    value,
+    onChange,
+    onCreated,
+    placeholder = "Select ledger…",
+  },
+  ref
+) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focusOpen: () => {
+      setOpen(true);
+      buttonRef.current?.focus();
+    },
+  }));
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
 
   const selected = ledgers.find((l) => l.id === value) || null;
   const filtered = useMemo(() => {
@@ -68,6 +95,7 @@ export function LedgerSelect({
   return (
     <div className="relative" ref={boxRef}>
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={`w-full flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm text-left ${
@@ -124,4 +152,7 @@ export function LedgerSelect({
       )}
     </div>
   );
-}
+});
+
+LedgerSelect.displayName = "LedgerSelect";
+

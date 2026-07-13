@@ -1,33 +1,33 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 import { seedLedgersForUser } from "@/lib/accounting/seedLedgers";
 import type { LedgerGroup, LedgerType } from "@/lib/accounting/types";
 
-// GET /api/ledgers — list the chart of accounts (seeds the standard chart on first call)
 export async function GET() {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
-    await seedLedgersForUser(prisma, user.id);
+    await seedLedgersForUser(prisma, user.id, client.id);
 
     const ledgers = await prisma.ledger.findMany({
-      where: { userId: user.id, clientId: "" },
+      where: { userId: user.id, clientId: client.id },
       orderBy: [{ group: "asc" }, { name: "asc" }],
     });
-    return NextResponse.json({ ledgers });
+    return NextResponse.json({ ledgers, clientId: client.id });
   } catch (error) {
     console.error("[LEDGERS_GET_ERROR]", error);
     return NextResponse.json({ error: "Failed to load ledgers" }, { status: 500 });
   }
 }
 
-// POST /api/ledgers — create a ledger on the fly during mapping
 export async function POST(req: Request) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const body = await req.json();
     const name = String(body.name ?? "").trim();
@@ -38,11 +38,11 @@ export async function POST(req: Request) {
     const gstRate = body.gstRate != null ? Number(body.gstRate) : null;
 
     const ledger = await prisma.ledger.upsert({
-      where: { userId_clientId_name: { userId: user.id, clientId: "", name } },
+      where: { userId_clientId_name: { userId: user.id, clientId: client.id, name } },
       update: {},
       create: {
         userId: user.id,
-        clientId: "",
+        clientId: client.id,
         name,
         group,
         ledgerType,

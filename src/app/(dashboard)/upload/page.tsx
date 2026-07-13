@@ -17,7 +17,10 @@ import {
   ImageIcon,
   FileUp,
   ArrowRight,
+  History,
+  Plus,
 } from "lucide-react";
+import { detectDocumentType, detectedToDocumentType } from "@/lib/docs/detectType";
 
 type ExtractedData = Record<string, any>;
 type GSTValidation = {
@@ -28,6 +31,12 @@ type GSTValidation = {
   customer_valid?: boolean;
   customer_state?: string;
   customer_message?: string;
+};
+
+type LedgerSuggestion = {
+  ledgerId: string;
+  ledgerName: string;
+  via: string;
 };
 
 type UploadDoc = {
@@ -42,6 +51,16 @@ type UploadDoc = {
   extracting: boolean;
   saving: boolean;
   saved: boolean;
+  // "Similar party" prompt shown after extraction
+  ledgerSuggestion: LedgerSuggestion | null;
+  ledgerChoice: "previous" | "new" | null;
+};
+
+const VIA_LABEL: Record<string, string> = {
+  GSTIN_MEMORY: "same GSTIN used before",
+  NAME_MEMORY: "same name used before",
+  FUZZY: "similar name used before",
+  RULE: "matches a mapping rule",
 };
 
 const MAX_FILES = 15;
@@ -59,6 +78,12 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [docType, setDocType] = useState<"invoice" | "bank">("invoice");
+  const [autoDetected, setAutoDetected] = useState<string | null>(null);
+  const [classifying, setClassifying] = useState(false);
+  const [pendingDuplicate, setPendingDuplicate] = useState<{
+    docId: string;
+    duplicateOfId: string | null;
+  } | null>(null);
 
   const extractedCount = useMemo(
     () => documents.filter((doc) => !!doc.extractedData).length,
@@ -67,6 +92,13 @@ export default function UploadPage() {
 
   const savedCount = useMemo(
     () => documents.filter((doc) => doc.saved).length,
+    [documents]
+  );
+
+  // First extracted doc whose party matched a prior ledger and still awaits a
+  // reuse/create decision — drives the popup (shown one at a time).
+  const pendingSuggestionDoc = useMemo(
+    () => documents.find((doc) => doc.ledgerSuggestion && !doc.ledgerChoice) ?? null,
     [documents]
   );
 
@@ -82,8 +114,24 @@ export default function UploadPage() {
     };
   }, []);
 
-  const addFiles = (incomingFiles: File[]) => {
+  const addFiles = async (incomingFiles: File[]) => {
     if (!incomingFiles.length) return;
+
+    // Filename heuristic first (instant)
+    const guess = detectDocumentType({ fileName: incomingFiles[0].name });
+    if (guess === "bank") {
+      setDocType("bank");
+      setAutoDetected("Bank statement (from filename)");
+    } else {
+      setDocType("invoice");
+      setAutoDetected(
+        guess === "credit_note"
+          ? "Credit note (from filename)"
+          : guess === "debit_note"
+            ? "Debit note (from filename)"
+            : "Invoice (from filename) — refining with OCR…"
+      );
+    }
 
     const supported = incomingFiles.filter(
       (f) => f.type.startsWith("image/") || f.type === "application/pdf"
@@ -139,10 +187,42 @@ export default function UploadPage() {
         extracting: false,
         saving: false,
         saved: false,
+        ledgerSuggestion: null,
+        ledgerChoice: null,
       }));
 
       return [...prev, ...nextDocs];
     });
+
+    // Vision classify first file (async refine)
+    void classifyFirstFile(allowed[0]);
+  };
+
+  const classifyFirstFile = async (file: File) => {
+    setClassifying(true);
+    try {
+      const data = new FormData();
+      data.append("file", file);
+      const res = await fetch("/api/classify-doc", { method: "POST", body: data });
+      const json = await res.json();
+      if (!res.ok) return;
+      const t = json.doc_type as string;
+      const conf = Math.round((json.confidence || 0) * 100);
+      const src = json.source === "ocr" ? "OCR" : "filename";
+      if (t === "bank") {
+        setDocType("bank");
+        setAutoDetected(`Bank statement (${src}, ${conf}% conf)`);
+      } else {
+        setDocType("invoice");
+        setAutoDetected(
+          `${String(t).replace("_", " ")} (${src}, ${conf}% conf)`
+        );
+      }
+    } catch {
+      /* keep filename guess */
+    } finally {
+      setClassifying(false);
+    }
   };
 
   const removeDocument = (id: string) => {
@@ -176,7 +256,15 @@ export default function UploadPage() {
     setDocuments((prev) =>
       prev.map((d) =>
         d.id === id
-          ? { ...d, extracting: true, error: null, extractedData: null, saved: false }
+          ? {
+              ...d,
+              extracting: true,
+              error: null,
+              extractedData: null,
+              saved: false,
+              ledgerSuggestion: null,
+              ledgerChoice: null,
+            }
           : d
       )
     );
@@ -196,12 +284,18 @@ export default function UploadPage() {
         return;
       }
 
+      const extracted = json.data || json;
+      // Refine type from extracted content
+      const refined = detectDocumentType({ fileName: doc.file.name, extracted });
+      if (refined === "bank") setDocType("bank");
+      setAutoDetected(`Detected: ${refined.replace("_", " ")}`);
+
       setDocuments((prev) =>
         prev.map((d) =>
           d.id === id
             ? {
                 ...d,
-                extractedData: json.data || json,
+                extractedData: extracted,
                 gstValidation: json.gst_validation || null,
                 processingTime: json.processing_time || null,
                 ocrEngine: json.ocr_engine || null,
@@ -211,6 +305,12 @@ export default function UploadPage() {
             : d
         )
       );
+
+      // Invoices only: check whether this party was mapped before and, if so,
+      // prompt the user to reuse that ledger or create a new one.
+      if (docType === "invoice") {
+        void fetchLedgerSuggestion(id, extracted);
+      }
     } catch {
       setDocuments((prev) =>
         prev.map((d) =>
@@ -224,6 +324,40 @@ export default function UploadPage() {
         )
       );
     }
+  };
+
+  // Ask the backend whether this vendor was mapped to a ledger before.
+  const fetchLedgerSuggestion = async (id: string, extracted: ExtractedData) => {
+    try {
+      const res = await fetch("/api/ledgers/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendor: extracted?.vendor ?? null,
+          vendorGstin: extracted?.vendor_gstin ?? null,
+        }),
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json?.match) {
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === id && !d.ledgerChoice
+              ? { ...d, ledgerSuggestion: json.match as LedgerSuggestion }
+              : d
+          )
+        );
+      }
+    } catch {
+      /* suggestion is best-effort — never block the flow */
+    }
+  };
+
+  // Record the user's answer to the "reuse ledger?" popup.
+  const resolveLedgerChoice = (id: string, choice: "previous" | "new") => {
+    setDocuments((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, ledgerChoice: choice } : d))
+    );
   };
 
   const handleExtractAll = async () => {
@@ -252,7 +386,10 @@ export default function UploadPage() {
     );
   };
 
-  const saveSingle = async (id: string): Promise<{ voucherId: string | null } | null> => {
+  const saveSingle = async (
+    id: string,
+    opts?: { allowDuplicate?: boolean }
+  ): Promise<{ voucherId: string | null } | null> => {
     const doc = documents.find((d) => d.id === id);
     if (!doc?.extractedData) return null;
 
@@ -268,21 +405,36 @@ export default function UploadPage() {
           fileName: doc.file.name || "invoice",
           processingTime: doc.processingTime,
           ocrEngine: doc.ocrEngine,
+          documentType: detectedToDocumentType(
+            detectDocumentType({ fileName: doc.file.name, extracted: doc.extractedData })
+          ),
+          partyLedgerId:
+            doc.ledgerChoice === "previous" ? doc.ledgerSuggestion?.ledgerId ?? null : null,
+          forceNewParty: doc.ledgerChoice === "new",
+          allowDuplicate: !!opts?.allowDuplicate,
         }),
       });
 
+      const json = await res.json().catch(() => ({}));
+
+      if (res.status === 409 && json.code === "DUPLICATE_INVOICE") {
+        setDocuments((prev) =>
+          prev.map((d) => (d.id === id ? { ...d, saving: false } : d))
+        );
+        setPendingDuplicate({ docId: id, duplicateOfId: json.duplicateOfId ?? null });
+        return null;
+      }
+
       if (res.ok) {
-        const json = await res.json();
         setDocuments((prev) =>
           prev.map((d) => (d.id === id ? { ...d, saving: false, saved: true, error: null } : d))
         );
         return { voucherId: json.voucherId ?? null };
       } else {
-        const err = await res.json();
         setDocuments((prev) =>
           prev.map((d) =>
             d.id === id
-              ? { ...d, saving: false, saved: false, error: `Failed to save: ${err.error || "Unknown error"}` }
+              ? { ...d, saving: false, saved: false, error: `Failed to save: ${json.error || "Unknown error"}` }
               : d
           )
         );
@@ -296,6 +448,14 @@ export default function UploadPage() {
       );
       return null;
     }
+  };
+
+  const confirmDuplicateSave = async () => {
+    if (!pendingDuplicate) return;
+    const { docId } = pendingDuplicate;
+    setPendingDuplicate(null);
+    const result = await saveSingle(docId, { allowDuplicate: true });
+    if (result?.voucherId) router.push(`/vouchers/${result.voucherId}`);
   };
 
   // Save a single document and jump straight to its ledger-mapping screen
@@ -385,7 +545,10 @@ export default function UploadPage() {
           {([["invoice", "Invoice"], ["bank", "Bank Statement"]] as const).map(([val, label]) => (
             <button
               key={val}
-              onClick={() => setDocType(val)}
+              onClick={() => {
+                setDocType(val);
+                setAutoDetected(null);
+              }}
               className={`px-4 py-2 font-medium ${docType === val ? "bg-gray-900 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
             >
               {label}
@@ -393,6 +556,12 @@ export default function UploadPage() {
           ))}
         </div>
       </div>
+      {autoDetected && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800 flex items-center gap-2">
+          {classifying && <Loader2 className="h-4 w-4 animate-spin shrink-0" />}
+          Auto-detected: {autoDetected} (you can override with the toggle)
+        </div>
+      )}
 
       {/* Upload Area */}
       <div
@@ -514,6 +683,16 @@ export default function UploadPage() {
                 <p className="text-xs text-gray-500 mt-1">{(doc.file.size / 1024 / 1024).toFixed(2)} MB</p>
               </div>
               <div className="flex items-center gap-2">
+                {doc.ledgerChoice === "previous" && doc.ledgerSuggestion && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-700">
+                    <History className="h-3.5 w-3.5" /> Reusing {doc.ledgerSuggestion.ledgerName}
+                  </span>
+                )}
+                {doc.ledgerChoice === "new" && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-700">
+                    <Plus className="h-3.5 w-3.5" /> New ledger
+                  </span>
+                )}
                 {doc.saved && (
                   <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-green-100 text-green-700">
                     <CheckCircle2 className="h-3.5 w-3.5" /> Saved
@@ -703,6 +882,103 @@ export default function UploadPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {pendingSuggestionDoc && pendingSuggestionDoc.ledgerSuggestion && (
+        <LedgerReusePopup
+          fileName={pendingSuggestionDoc.file.name}
+          vendor={pendingSuggestionDoc.extractedData?.vendor || "this party"}
+          suggestion={pendingSuggestionDoc.ledgerSuggestion}
+          onReuse={() => resolveLedgerChoice(pendingSuggestionDoc.id, "previous")}
+          onCreateNew={() => resolveLedgerChoice(pendingSuggestionDoc.id, "new")}
+        />
+      )}
+
+      {pendingDuplicate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-gray-100">
+            <div className="p-6">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-100 text-purple-600">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Possible duplicate</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Same invoice number, vendor, and amount already exist for this client.
+                    Saving again will create another voucher marked as duplicate.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 border-t bg-gray-50 p-4 rounded-b-2xl">
+              <Button variant="outline" className="flex-1" onClick={() => setPendingDuplicate(null)}>
+                Cancel
+              </Button>
+              <Button className="flex-1 bg-purple-600 hover:bg-purple-700" onClick={confirmDuplicateSave}>
+                Save anyway
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LedgerReusePopup({
+  fileName,
+  vendor,
+  suggestion,
+  onReuse,
+  onCreateNew,
+}: {
+  fileName: string;
+  vendor: string;
+  suggestion: LedgerSuggestion;
+  onReuse: () => void;
+  onCreateNew: () => void;
+}) {
+  const reason = VIA_LABEL[suggestion.via] || "matched from history";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-gray-100 animate-in zoom-in-95">
+        <div className="p-6">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600">
+              <History className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-lg font-bold text-gray-900">Party seen before</h3>
+              <p className="text-sm text-gray-500 mt-0.5 truncate">{fileName}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-3 text-sm">
+            <p className="text-gray-700">
+              <span className="font-semibold">{vendor}</span> looks like a party you&apos;ve
+              already mapped ({reason}).
+            </p>
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3">
+              <p className="text-xs uppercase tracking-wide text-blue-500">Previously used ledger</p>
+              <p className="text-base font-semibold text-blue-800 mt-0.5">
+                {suggestion.ledgerName}
+              </p>
+            </div>
+            <p className="text-gray-500">
+              Reuse this ledger for consistency, or create a new one for this invoice.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-3 border-t bg-gray-50 p-4 rounded-b-2xl">
+          <Button variant="outline" className="flex-1" onClick={onCreateNew}>
+            <Plus className="mr-2 h-4 w-4" /> Create new
+          </Button>
+          <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={onReuse}>
+            <CheckCircle2 className="mr-2 h-4 w-4" /> Use previous
+          </Button>
+        </div>
       </div>
     </div>
   );

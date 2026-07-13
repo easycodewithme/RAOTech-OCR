@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
+import { rememberNarrationMapping } from "@/lib/accounting/rememberMapping";
 
-// GET /api/bank-statements/[id]
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
     const { id } = await params;
 
     const statement = await prisma.bankStatement.findFirst({
-      where: { id, userId: user.id },
+      where: { id, userId: user.id, clientId: client.id },
       include: { txns: { orderBy: { sortOrder: "asc" } } },
     });
     if (!statement) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -21,35 +22,33 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   }
 }
 
-/**
- * PATCH /api/bank-statements/[id]
- *  - { txns: [{id, ledgerId}] } — remap contra ledgers
- *  - { status: "SYNCED" }       — mark synced (frontend Tally action)
- */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
     const { id } = await params;
 
     const statement = await prisma.bankStatement.findFirst({
-      where: { id, userId: user.id },
-      include: { txns: { select: { id: true } } },
+      where: { id, userId: user.id, clientId: client.id },
+      include: { txns: true },
     });
     if (!statement) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const body = await req.json();
     const validIds = new Set(statement.txns.map((t) => t.id));
-    const txnUpdates: Array<{ id: string; ledgerId: string | null }> = body.txns ?? [];
+    const txnUpdates: Array<{ id: string; ledgerId: string | null; classification?: string }> =
+      body.txns ?? [];
 
     const ledgerIds = txnUpdates.map((u) => u.ledgerId).filter((x): x is string => !!x);
     const ledgers = ledgerIds.length
       ? await prisma.ledger.findMany({
-          where: { id: { in: ledgerIds }, userId: user.id },
+          where: { id: { in: ledgerIds }, userId: user.id, clientId: client.id },
           select: { id: true, name: true },
         })
       : [];
     const nameById = new Map(ledgers.map((l) => [l.id, l.name]));
+    const txnById = new Map(statement.txns.map((t) => [t.id, t]));
 
     await prisma.$transaction([
       ...txnUpdates
@@ -60,6 +59,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
             data: {
               ledgerId: u.ledgerId,
               ledgerNameSnapshot: u.ledgerId ? nameById.get(u.ledgerId) ?? null : null,
+              ...(u.classification
+                ? { classification: u.classification as any }
+                : {}),
             },
           })
         ),
@@ -67,6 +69,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ? [prisma.bankStatement.update({ where: { id }, data: { status: String(body.status) } })]
         : []),
     ]);
+
+    // Learn narration mappings
+    for (const u of txnUpdates) {
+      if (!u.ledgerId) continue;
+      const txn = txnById.get(u.id);
+      if (txn?.description) {
+        await rememberNarrationMapping(prisma, user.id, client.id, txn.description, u.ledgerId);
+      }
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -1,6 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 import { seedLedgersForUser } from "@/lib/accounting/seedLedgers";
 import BankMapping from "./BankMapping";
 
@@ -9,20 +9,21 @@ export default async function BankStatementPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const user = await getDbUser();
-  if (!user) return redirect("/sign-in");
+  const ctx = await getActiveClient();
+  if (!ctx) return redirect("/sign-in");
+  const { user, client } = ctx;
   const { id } = await params;
 
-  await seedLedgersForUser(prisma, user.id);
+  await seedLedgersForUser(prisma, user.id, client.id);
 
   const statement = await prisma.bankStatement.findFirst({
-    where: { id, userId: user.id },
+    where: { id, userId: user.id, clientId: client.id },
     include: { txns: { orderBy: { sortOrder: "asc" } } },
   });
   if (!statement) return notFound();
 
   const ledgers = await prisma.ledger.findMany({
-    where: { userId: user.id, clientId: "" },
+    where: { userId: user.id, clientId: client.id },
     orderBy: [{ group: "asc" }, { name: "asc" }],
     select: { id: true, name: true, group: true, ledgerType: true },
   });
@@ -41,6 +42,8 @@ export default async function BankStatementPage({
       withdrawal: t.withdrawal,
       deposit: t.deposit,
       balance: t.balance,
+      classification: t.classification,
+      confidence: t.confidence,
       ledgerId: t.ledgerId,
       ledgerNameSnapshot: t.ledgerNameSnapshot,
     })),

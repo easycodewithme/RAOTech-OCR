@@ -15,6 +15,8 @@ interface Txn {
   withdrawal: number;
   deposit: number;
   balance: number | null;
+  classification?: string | null;
+  confidence?: number | null;
   ledgerId: string | null;
   ledgerNameSnapshot: string | null;
 }
@@ -29,6 +31,17 @@ interface Statement {
 }
 
 const money = (n: number) => (n ? `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "");
+
+function ClassChip({ c }: { c?: string | null }) {
+  if (!c) return null;
+  const color =
+    c === "RECEIPT"
+      ? "bg-green-100 text-green-700"
+      : c === "CONTRA"
+        ? "bg-blue-100 text-blue-700"
+        : "bg-amber-100 text-amber-700";
+  return <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${color}`}>{c}</span>;
+}
 
 export default function BankMapping({
   statement,
@@ -48,13 +61,16 @@ export default function BankMapping({
   const totalOut = useMemo(() => txns.reduce((a, t) => a + (t.withdrawal || 0), 0), [txns]);
   const locked = statement.status === "SYNCED" || phase === "synced";
 
-  // Fire-and-forget persistence — UI never waits (prototype).
   function persistInBackground(current: Txn[], status?: string) {
     fetch(`/api/bank-statements/${statement.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        txns: current.map((t) => ({ id: t.id, ledgerId: t.ledgerId })),
+        txns: current.map((t) => ({
+          id: t.id,
+          ledgerId: t.ledgerId,
+          classification: t.classification,
+        })),
         ...(status ? { status } : {}),
       }),
     }).catch(() => {});
@@ -114,6 +130,9 @@ export default function BankMapping({
             {statement.accountNumber ? `A/C ${statement.accountNumber} • ` : ""}
             {txns.length} transactions • In {money(totalIn)} • Out {money(totalOut)}
           </p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Auto-classified as Payment / Receipt / Contra with narration-memory suggestions
+          </p>
         </div>
       </div>
 
@@ -124,6 +143,7 @@ export default function BankMapping({
               <tr>
                 <th className="px-3 py-2 text-left">Date</th>
                 <th className="px-3 py-2 text-left">Description</th>
+                <th className="px-3 py-2 text-left">Class</th>
                 <th className="px-3 py-2 text-right">Withdrawal</th>
                 <th className="px-3 py-2 text-right">Deposit</th>
                 <th className="px-3 py-2 text-left w-[260px]">Ledger</th>
@@ -139,8 +159,15 @@ export default function BankMapping({
                     <div className="text-gray-800">{t.description}</div>
                     {t.refNo && <div className="text-xs text-gray-400">Ref: {t.refNo}</div>}
                   </td>
-                  <td className="px-3 py-2 text-right text-red-600 font-medium whitespace-nowrap">{money(t.withdrawal)}</td>
-                  <td className="px-3 py-2 text-right text-green-600 font-medium whitespace-nowrap">{money(t.deposit)}</td>
+                  <td className="px-3 py-2">
+                    <ClassChip c={t.classification} />
+                  </td>
+                  <td className="px-3 py-2 text-right text-red-600 font-medium whitespace-nowrap">
+                    {money(t.withdrawal)}
+                  </td>
+                  <td className="px-3 py-2 text-right text-green-600 font-medium whitespace-nowrap">
+                    {money(t.deposit)}
+                  </td>
                   <td className="px-3 py-2">
                     {locked ? (
                       <span className="text-gray-800">{t.ledgerNameSnapshot || "—"}</span>
@@ -157,7 +184,7 @@ export default function BankMapping({
               ))}
               {txns.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-10 text-center text-gray-400">
+                  <td colSpan={6} className="px-3 py-10 text-center text-gray-400">
                     No transactions extracted from this statement.
                   </td>
                 </tr>
@@ -179,10 +206,9 @@ export default function BankMapping({
         disabled={unmapped > 0 || locked}
         className={`fixed bottom-6 left-6 md:left-[19.5rem] z-40 inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold shadow-lg transition
           ${locked ? "bg-emerald-600 text-white cursor-default" : unmapped > 0 ? "bg-gray-300 text-gray-500 cursor-not-allowed" : "bg-[#0b6b3a] text-white hover:bg-[#0a5c32] hover:shadow-xl"}`}
-        title={unmapped > 0 ? "Map all transactions first" : "Send to Tally"}
       >
         {locked ? <CheckCircle2 className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-        {locked ? "Synced to Tally" : "Send to Tally"}
+        {locked ? "Synced to Tally" : "Send to Tally (demo)"}
       </button>
 
       <TallySyncOverlay phase={phase} label="bank statement" onDone={() => router.push("/transactions")} />

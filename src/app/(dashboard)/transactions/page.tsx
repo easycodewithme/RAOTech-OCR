@@ -1,25 +1,30 @@
 import { redirect } from "next/navigation";
+import { getActiveClient } from "@/lib/clientContext";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
 import TransactionsList from "./TransactionsList";
 
 export default async function TransactionsPage() {
-  const user = await getDbUser();
-  if (!user) return redirect("/sign-in");
+  const ctx = await getActiveClient();
+  if (!ctx) return redirect("/sign-in");
+  const { user, client } = ctx;
 
   const [vouchers, statements] = await Promise.all([
     prisma.voucher.findMany({
-      where: { userId: user.id, clientId: "" },
+      where: { userId: user.id, clientId: client.id },
       orderBy: { createdAt: "desc" },
       include: {
-        invoice: { select: { vendor: true, invoiceNumber: true } },
+        invoice: { select: { vendor: true, invoiceNumber: true, isDuplicate: true } },
         lines: { select: { ledgerId: true } },
       },
     }),
     prisma.bankStatement.findMany({
-      where: { userId: user.id, clientId: "" },
+      where: { userId: user.id, clientId: client.id },
       orderBy: { createdAt: "desc" },
-      include: { txns: { select: { ledgerId: true, deposit: true, withdrawal: true } } },
+      include: {
+        txns: {
+          select: { ledgerId: true, deposit: true, withdrawal: true, classification: true },
+        },
+      },
     }),
   ]);
 
@@ -31,6 +36,8 @@ export default async function TransactionsPage() {
     amount: v.totalDebit,
     status: v.status,
     hasUnmapped: v.lines.some((l) => l.ledgerId === null),
+    isDuplicate: v.invoice?.isDuplicate ?? false,
+    confidence: v.avgConfidence,
   }));
 
   const bankRows = statements.map((s) => ({

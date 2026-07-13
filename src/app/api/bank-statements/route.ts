@@ -1,19 +1,34 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getDbUser } from "@/lib/getDbUser";
+import { getActiveClient } from "@/lib/clientContext";
 import { seedLedgersForUser } from "@/lib/accounting/seedLedgers";
 import { cleanDate, cleanMoney } from "@/lib/accounting/normalize";
+import {
+  classifyBankTxn,
+  narrationKey,
+  suggestLedgerFromNarrationMemory,
+} from "@/lib/bank/classify";
 
-// GET /api/bank-statements — list statements for the queue
 export async function GET() {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const statements = await prisma.bankStatement.findMany({
-      where: { userId: user.id, clientId: "" },
+      where: { userId: user.id, clientId: client.id },
       orderBy: { createdAt: "desc" },
-      include: { txns: { select: { id: true, ledgerId: true, withdrawal: true, deposit: true } } },
+      include: {
+        txns: {
+          select: {
+            id: true,
+            ledgerId: true,
+            withdrawal: true,
+            deposit: true,
+            classification: true,
+          },
+        },
+      },
     });
 
     const rows = statements.map((s) => ({
@@ -34,43 +49,75 @@ export async function GET() {
   }
 }
 
-// POST /api/bank-statements — persist an extracted statement + its transactions
 export async function POST(req: Request) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
-    await seedLedgersForUser(prisma, user.id);
+    await seedLedgersForUser(prisma, user.id, client.id);
 
     const body = await req.json();
-    const data = body.data ?? body; // accept {data:{...}} or flat
+    const data = body.data ?? body;
     const txns: any[] = Array.isArray(data.transactions) ? data.transactions : [];
 
-    // Default the "other side" to the seeded Bank ledger
     const bankLedger = await prisma.ledger.findFirst({
-      where: { userId: user.id, clientId: "", ledgerType: "BANK" },
+      where: { userId: user.id, clientId: client.id, ledgerType: "BANK" },
       select: { id: true },
     });
+
+    // Load narration memory for suggestions
+    const narrMappings = await prisma.ledgerMapping.findMany({
+      where: { userId: user.id, clientId: client.id, matchType: "NARRATION" },
+      select: {
+        matchKey: true,
+        hitCount: true,
+        ledger: { select: { id: true, name: true } },
+      },
+    });
+    const memory: Record<string, { ledgerId: string; ledgerName: string; hitCount: number }> = {};
+    for (const m of narrMappings) {
+      memory[m.matchKey] = {
+        ledgerId: m.ledger.id,
+        ledgerName: m.ledger.name,
+        hitCount: m.hitCount,
+      };
+    }
 
     const statement = await prisma.bankStatement.create({
       data: {
         userId: user.id,
-        clientId: "",
+        clientId: client.id,
         fileName: body.fileName || "bank-statement",
         bankName: data.bank_name || null,
         accountNumber: data.account_number || null,
         bankLedgerId: bankLedger?.id ?? null,
         status: "DRAFT",
         txns: {
-          create: txns.map((t, i) => ({
-            date: t.date ? cleanDate(t.date) : null,
-            description: String(t.description || "Transaction").slice(0, 500),
-            refNo: t.ref || t.refNo || null,
-            withdrawal: cleanMoney(t.withdrawal),
-            deposit: cleanMoney(t.deposit),
-            balance: t.balance != null ? cleanMoney(t.balance) : null,
-            sortOrder: i,
-          })),
+          create: txns.map((t, i) => {
+            const withdrawal = cleanMoney(t.withdrawal);
+            const deposit = cleanMoney(t.deposit);
+            const desc = String(t.description || "Transaction").slice(0, 500);
+            const { classification, confidence } = classifyBankTxn({
+              description: desc,
+              withdrawal,
+              deposit,
+            });
+            const suggestion = suggestLedgerFromNarrationMemory(desc, memory);
+            return {
+              date: t.date ? cleanDate(t.date) : null,
+              description: desc,
+              refNo: t.ref || t.refNo || null,
+              withdrawal,
+              deposit,
+              balance: t.balance != null ? cleanMoney(t.balance) : null,
+              classification,
+              confidence: suggestion?.confidence ?? confidence,
+              ledgerId: suggestion?.ledgerId ?? null,
+              ledgerNameSnapshot: suggestion?.ledgerName ?? null,
+              sortOrder: i,
+            };
+          }),
         },
       },
       select: { id: true },

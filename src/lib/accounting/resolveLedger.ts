@@ -188,15 +188,16 @@ export async function resolveLedgersForInvoice(
   prisma: PrismaClient,
   userId: string,
   inv: NormalizedInvoice,
-  voucherType: VoucherType
+  voucherType: VoucherType,
+  clientId: string
 ): Promise<ResolvedLedgers> {
   const [ledgers, mappings, rules] = await Promise.all([
     prisma.ledger.findMany({
-      where: { userId, clientId: "" },
+      where: { userId, clientId },
       select: { id: true, name: true, ledgerType: true, gstRate: true },
     }),
     prisma.ledgerMapping.findMany({
-      where: { userId, clientId: "" },
+      where: { userId, clientId },
       select: {
         matchType: true,
         matchKey: true,
@@ -205,7 +206,7 @@ export async function resolveLedgersForInvoice(
       },
     }),
     prisma.mappingRule.findMany({
-      where: { userId, clientId: "", enabled: true },
+      where: { userId, clientId, enabled: true },
       orderBy: { priority: "asc" },
       select: {
         ruleType: true,
@@ -255,7 +256,7 @@ export async function resolveLedgersForInvoice(
       hitCount: m.hitCount,
     };
     if (m.matchType === "GSTIN") gstinMemory[m.matchKey] = entry;
-    else {
+    else if (m.matchType === "VENDOR_NAME") {
       nameMemory[m.matchKey] = entry;
       fuzzyCandidates.push({
         id: m.ledger.id,
