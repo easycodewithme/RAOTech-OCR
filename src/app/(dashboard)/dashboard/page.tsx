@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getActiveClient } from "@/lib/clientContext";
+import { extraPagesEnabled } from "@/lib/featureFlags";
 
 export default async function Dashboard() {
   const clerk = await currentUser();
@@ -22,6 +23,7 @@ export default async function Dashboard() {
   const ctx = await getActiveClient();
   if (!ctx) return redirect("/sign-in");
   const { user, client } = ctx;
+  const showExtraPages = extraPagesEnabled();
 
   const [invoices, vouchers, latestRecon, unmappedParties] = await Promise.all([
     prisma.invoice.findMany({
@@ -102,14 +104,14 @@ export default async function Dashboard() {
           label="Pending Review"
           value={pendingReview.length.toString()}
           bg="bg-yellow-50"
-          href="/review"
+          href={showExtraPages ? "/review" : "/transactions"}
         />
         <StatCard
           icon={<Scale className="h-5 w-5 text-orange-600" />}
           label="ITC at Stake"
           value={`₹${itcAtStake.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
           bg="bg-orange-50"
-          href="/gst"
+          href={showExtraPages ? "/gst" : undefined}
         />
         <StatCard
           icon={<IndianRupee className="h-5 w-5 text-purple-600" />}
@@ -158,9 +160,15 @@ export default async function Dashboard() {
         <div className="lg:col-span-2 border rounded-xl bg-white shadow-sm overflow-hidden">
           <div className="p-5 border-b bg-gray-50/50 flex justify-between items-center">
             <h3 className="font-semibold">Vouchers to Review</h3>
-            <Link href="/review" className="text-xs text-blue-600 hover:underline">
-              Open review queue
-            </Link>
+            {showExtraPages ? (
+              <Link href="/review" className="text-xs text-blue-600 hover:underline">
+                Open review queue
+              </Link>
+            ) : (
+              <Link href="/transactions" className="text-xs text-blue-600 hover:underline">
+                Open transactions
+              </Link>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
@@ -217,22 +225,28 @@ export default async function Dashboard() {
 
         <div className="border rounded-xl bg-white shadow-sm p-5 space-y-4">
           <h3 className="font-semibold">Quick actions</h3>
-          <Link href="/gst" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
-            Run GST reconciliation (GSTR-2B)
-          </Link>
-          <Link href="/pipeline" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
-            View pipeline board
-          </Link>
-          <Link href="/reports" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
-            GST summary &amp; reports
-          </Link>
+          {showExtraPages && (
+            <Link href="/gst" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
+              Run GST reconciliation (GSTR-2B)
+            </Link>
+          )}
+          {showExtraPages && (
+            <Link href="/pipeline" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
+              View pipeline board
+            </Link>
+          )}
+          {showExtraPages && (
+            <Link href="/reports" className="block rounded-lg border p-3 hover:bg-gray-50 text-sm">
+              GST summary &amp; reports
+            </Link>
+          )}
           <Link
             href="/transactions"
             className="block rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 font-medium"
           >
             Export approved vouchers to Tally XML
           </Link>
-          {latestRecon && (
+          {showExtraPages && latestRecon && (
             <div className="rounded-lg bg-orange-50 border border-orange-100 p-3 text-sm">
               <div className="font-medium text-orange-800">Latest 2B recon</div>
               <div className="text-orange-700 mt-1">

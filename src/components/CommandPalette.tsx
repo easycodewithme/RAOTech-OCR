@@ -12,14 +12,22 @@ import {
   Kanban,
   Filter,
 } from "lucide-react";
+import { extraPagesEnabled } from "@/lib/featureFlags";
 
 const COMMANDS = [
   { id: "dash", label: "Go to Dashboard", href: "/dashboard", icon: LayoutDashboard, keywords: "home kpi" },
   { id: "upload", label: "Upload documents", href: "/upload", icon: UploadCloud, keywords: "ocr extract" },
   { id: "tx", label: "Transactions", href: "/transactions", icon: ListChecks, keywords: "vouchers approve" },
-  { id: "review", label: "Review queue (low confidence)", href: "/review", icon: Filter, keywords: "confidence queue" },
-  { id: "pipeline", label: "Pipeline board", href: "/pipeline", icon: Kanban, keywords: "kanban" },
-  { id: "gst", label: "GST reconciliation", href: "/gst", icon: Scale, keywords: "2b itc" },
+  {
+    id: "review",
+    label: "Review queue (low confidence)",
+    href: "/review",
+    icon: Filter,
+    keywords: "confidence queue",
+    localOnly: true,
+  },
+  { id: "pipeline", label: "Pipeline board", href: "/pipeline", icon: Kanban, keywords: "kanban", localOnly: true },
+  { id: "gst", label: "GST reconciliation", href: "/gst", icon: Scale, keywords: "2b itc", localOnly: true },
   { id: "settings", label: "Ledgers & rules", href: "/settings", icon: BookOpen, keywords: "mapping" },
 ];
 
@@ -27,6 +35,8 @@ export function CommandPalette() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const showExtraPages = extraPagesEnabled();
+  const visibleCommands = COMMANDS.filter((c) => showExtraPages || !c.localOnly);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -43,14 +53,14 @@ export function CommandPalette() {
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return COMMANDS;
-    return COMMANDS.filter(
+    if (!needle) return visibleCommands;
+    return visibleCommands.filter(
       (c) =>
         c.label.toLowerCase().includes(needle) ||
         c.keywords.includes(needle) ||
         c.href.includes(needle)
     );
-  }, [q]);
+  }, [q, visibleCommands]);
 
   if (!open) return null;
 
