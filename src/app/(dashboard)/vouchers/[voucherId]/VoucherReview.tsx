@@ -50,7 +50,7 @@ function ConfidenceChip({ line }: { line: Line }) {
   return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-700">Low</span>;
 }
 
-const EDITABLE_ROLES = new Set(["PARTY", "ITEM"]);
+const EDITABLE_ROLES = new Set(["PARTY", "ITEM", "CGST", "SGST", "IGST"]);
 const TYPES = ["PURCHASE", "SALE", "CREDIT_NOTE", "DEBIT_NOTE"];
 
 export default function VoucherReview({

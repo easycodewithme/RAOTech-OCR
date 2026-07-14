@@ -67,38 +67,48 @@ export async function createDraftVoucherForInvoice(
   const avgConfidence =
     confidences.length > 0 ? confidences.reduce((a, b) => a + b, 0) / confidences.length : null;
 
+  const voucherFields = {
+    voucherType: draft.voucherType,
+    status: "DRAFT" as const,
+    date: draft.date,
+    narration: draft.narration,
+    totalDebit: draft.totalDebit,
+    totalCredit: draft.totalCredit,
+    roundOff: draft.roundOff,
+    avgConfidence,
+  };
+  const lineCreate = draft.lines.map((l) => ({
+    ledgerId: l.ledgerId,
+    ledgerNameSnapshot: l.ledgerNameSnapshot,
+    role: l.role,
+    debit: l.debit,
+    credit: l.credit,
+    confidence: l.confidence,
+    mappedVia: l.mappedVia,
+    hsnCode: l.hsnCode,
+    gstRate: l.gstRate,
+    sortOrder: l.sortOrder,
+  }));
+
   const result = await prisma.$transaction(async (tx) => {
     if (invoice.voucher) {
+      // Rebuild IN PLACE — keep the same voucher id so its URL and any
+      // in-flight client references (e.g. after a voucher-type switch) stay
+      // valid. Recreating with a new id orphaned the review page → 404.
       await tx.voucherLine.deleteMany({ where: { voucherId: invoice.voucher.id } });
-      await tx.voucher.delete({ where: { id: invoice.voucher.id } });
+      return tx.voucher.update({
+        where: { id: invoice.voucher.id },
+        data: { ...voucherFields, lines: { create: lineCreate } },
+        include: { lines: { orderBy: { sortOrder: "asc" } } },
+      });
     }
     return tx.voucher.create({
       data: {
         userId,
         clientId,
         invoiceId: invoice.id,
-        voucherType: draft.voucherType,
-        status: "DRAFT",
-        date: draft.date,
-        narration: draft.narration,
-        totalDebit: draft.totalDebit,
-        totalCredit: draft.totalCredit,
-        roundOff: draft.roundOff,
-        avgConfidence,
-        lines: {
-          create: draft.lines.map((l) => ({
-            ledgerId: l.ledgerId,
-            ledgerNameSnapshot: l.ledgerNameSnapshot,
-            role: l.role,
-            debit: l.debit,
-            credit: l.credit,
-            confidence: l.confidence,
-            mappedVia: l.mappedVia,
-            hsnCode: l.hsnCode,
-            gstRate: l.gstRate,
-            sortOrder: l.sortOrder,
-          })),
-        },
+        ...voucherFields,
+        lines: { create: lineCreate },
       },
       include: { lines: { orderBy: { sortOrder: "asc" } } },
     });
