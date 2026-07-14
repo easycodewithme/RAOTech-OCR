@@ -230,7 +230,7 @@ export default function VoucherReview({
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Ledger Mapping</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Assign ledgers, approve, then download Tally XML (demo transport).
+          Assign ledgers, approve, then download Tally XML.
         </p>
       </div>
 

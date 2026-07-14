@@ -208,7 +208,7 @@ export default function BankMapping({
           ${locked ? "bg-emerald-600 text-white cursor-default" : unmapped > 0 ? "bg-gray-300 text-gray-500 cursor-not-allowed" : "bg-[#0b6b3a] text-white hover:bg-[#0a5c32] hover:shadow-xl"}`}
       >
         {locked ? <CheckCircle2 className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-        {locked ? "Synced to Tally" : "Send to Tally (demo)"}
+        {locked ? "Synced to Tally" : "Send to Tally"}
       </button>
 
       <TallySyncOverlay phase={phase} label="bank statement" onDone={() => router.push("/transactions")} />

@@ -144,7 +144,7 @@ export default async function Dashboard() {
         />
         <StatCard
           icon={<Download className="h-5 w-5 text-sky-600" />}
-          label="Exported (demo)"
+          label="Exported"
           value={exported.length.toString()}
           bg="bg-sky-50"
         />
