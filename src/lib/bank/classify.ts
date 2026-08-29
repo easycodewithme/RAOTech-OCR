@@ -1,4 +1,9 @@
-import { normName } from "../accounting/normalize";
+import { narrationKey } from "../accounting/normalize";
+
+// Re-exported so existing importers keep working. The definition now lives
+// beside the name normaliser it is built from, so the writer and the reader
+// of the narration memory cannot drift apart again.
+export { narrationKey };
 
 export type BankTxnClass = "PAYMENT" | "RECEIPT" | "CONTRA";
 
@@ -39,16 +44,6 @@ export function classifyBankTxn(opts: {
     return { classification: "RECEIPT", confidence: 0.55 };
   }
   return { classification: "PAYMENT", confidence: 0.55 };
-}
-
-export function narrationKey(description: string): string {
-  return (
-    normName(
-      description
-        .replace(/\b\d{6,}\b/g, " ") // strip long refs
-        .replace(/\b(upi|neft|imps|rtgs|ref|txn)\b/gi, " ")
-    ) || ""
-  );
 }
 
 export function suggestLedgerFromNarrationMemory(

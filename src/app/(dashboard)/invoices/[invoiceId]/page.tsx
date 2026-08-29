@@ -1,20 +1,23 @@
-import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import InvoiceDetailView from "./InvoiceDetailView";
 import { prisma } from "@/lib/prisma";
+import { getActiveClient } from "@/lib/clientContext";
 
 interface PageProps {
   params: Promise<{ invoiceId: string }>;
 }
 
 export default async function InvoiceDetailPage({ params }: PageProps) {
-  const user = await currentUser();
-  if (!user) redirect("/sign-in");
+  const ctx = await getActiveClient();
+  if (!ctx) redirect("/sign-in");
+  const { user, client } = ctx;
 
   const { invoiceId } = await params;
 
-  const invoice = await prisma.invoice.findUnique({
-    where: { id: invoiceId },
+  // Scoped to the caller's workspace — an unscoped findUnique here would render
+  // any tenant's invoice to anyone holding the id.
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, userId: user.id, clientId: client.id },
   });
 
   if (!invoice) {

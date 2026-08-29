@@ -4,7 +4,19 @@ import { prisma } from "@/lib/prisma";
 import TransactionsList from "./TransactionsList";
 import { traceAsync } from "@/lib/trace";
 
-export default async function TransactionsPage() {
+/**
+ * `?sync=failed` opens straight into the failed-push list.
+ *
+ * Read here rather than with `useSearchParams` in the client component: this
+ * page is already an async server component, so threading it down as a prop
+ * avoids pulling the whole table behind a Suspense boundary for one boolean.
+ */
+export default async function TransactionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sync?: string }>;
+}) {
+  const { sync } = await searchParams;
   return traceAsync("page:/transactions", "render", async () => {
     const ctx = await getActiveClient();
     if (!ctx) return redirect("/sign-in");
@@ -107,6 +119,12 @@ export default async function TransactionsPage() {
       };
     });
 
-    return <TransactionsList vouchers={voucherRows} statements={bankRows} />;
+    return (
+      <TransactionsList
+        vouchers={voucherRows}
+        statements={bankRows}
+        initialSyncFilter={sync === "failed" ? "failed" : sync === "stuck" ? "stuck" : null}
+      />
+    );
   });
 }

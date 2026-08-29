@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
+import { backendFetch } from "@/lib/backend";
 import { withRouteLogging } from "@/lib/trace";
-
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8001";
 
 async function processInvoice(req: Request) {
   try {
@@ -16,7 +15,7 @@ async function processInvoice(req: Request) {
     const backendForm = new FormData();
     backendForm.append("file", file);
 
-    const response = await fetch(`${BACKEND_URL}/extract`, {
+    const response = await backendFetch("/extract", {
       method: "POST",
       body: backendForm,
     });

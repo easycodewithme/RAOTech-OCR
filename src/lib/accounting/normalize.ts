@@ -116,3 +116,26 @@ export function normalizeInvoice(
     items: normalizeItems(d.items),
   };
 }
+
+/**
+ * The key a bank narration is remembered and looked up under.
+ *
+ * Lives here, beside `normName`, because it has exactly one job: to be the same
+ * string on both sides of `LedgerMapping`. It used to live in `lib/bank/classify.ts`
+ * while the writer in `rememberMapping.ts` used plain `normName`, so every
+ * narration learned through that writer was stored under a key the reader never
+ * asked for. For "UPI/DR/402913844/RELIANCE" the two differ, which is to say
+ * they differ for almost every real narration.
+ *
+ * Beyond `normName`, it strips the parts of a narration that are unique to one
+ * transaction and therefore useless as a memory key: runs of six or more digits
+ * (reference and UTR numbers) and the rail names UPI / NEFT / IMPS / RTGS /
+ * REF / TXN. What is left is the counterparty, which is what the accountant was
+ * actually recognising when they chose the ledger.
+ */
+export const narrationKey = (description: string): string =>
+  normName(
+    (description || "")
+      .replace(/\b\d{6,}\b/g, " ")
+      .replace(/\b(upi|neft|imps|rtgs|ref|txn)\b/gi, " ")
+  ) || "";

@@ -5,6 +5,15 @@ export const LOCAL_ONLY_ROUTE_PREFIXES = [
   "/reports",
   "/intake",
   "/tasks",
+  /**
+   * Not yet real. Every thread, group and message on this screen comes from
+   * `communication/mockData.ts` — invented colleagues discussing invented
+   * invoices. Harmless while it is being built; in front of a CA firm owner it
+   * is the one screen that would make them doubt the rest of the product.
+   *
+   * Comes off this list the day it reads from the database.
+   */
+  "/communication",
 ];
 
 export const LOCAL_ONLY_API_PREFIXES = [

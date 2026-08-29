@@ -11,11 +11,14 @@ import {
   BookOpen,
   Kanban,
   Filter,
+  PlugZap,
+  Building2,
 } from "lucide-react";
 import { extraPagesEnabled } from "@/lib/featureFlags";
 
 const COMMANDS = [
   { id: "dash", label: "Go to Dashboard", href: "/dashboard", icon: LayoutDashboard, keywords: "home kpi" },
+  { id: "clients", label: "All clients", href: "/clients", icon: Building2, keywords: "portfolio switch firm overview stuck failed" },
   { id: "upload", label: "Upload documents", href: "/upload", icon: UploadCloud, keywords: "ocr extract" },
   { id: "tx", label: "Transactions", href: "/transactions", icon: ListChecks, keywords: "vouchers approve" },
   {
@@ -29,6 +32,13 @@ const COMMANDS = [
   { id: "pipeline", label: "Pipeline board", href: "/pipeline", icon: Kanban, keywords: "kanban", localOnly: true },
   { id: "gst", label: "GST reconciliation", href: "/gst", icon: Scale, keywords: "2b itc", localOnly: true },
   { id: "settings", label: "Ledgers & rules", href: "/settings", icon: BookOpen, keywords: "mapping" },
+  {
+    id: "tally",
+    label: "Tally connection",
+    href: "/settings/tally",
+    icon: PlugZap,
+    keywords: "connector pair device sync master company",
+  },
 ];
 
 export function CommandPalette() {

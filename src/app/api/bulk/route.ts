@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8001";
+import { backendFetch } from "@/lib/backend";
 
 export async function POST(req: Request) {
   try {
@@ -17,7 +16,7 @@ export async function POST(req: Request) {
       backendForm.append("files", file);
     }
 
-    const response = await fetch(`${BACKEND_URL}/extract/bulk`, {
+    const response = await backendFetch("/extract/bulk", {
       method: "POST",
       body: backendForm,
     });
@@ -52,7 +51,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "jobId is required" }, { status: 400 });
     }
 
-    const response = await fetch(`${BACKEND_URL}/jobs/${jobId}`);
+    const response = await backendFetch(`/jobs/${jobId}`);
 
     if (!response.ok) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 });

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getActiveClient } from "@/lib/clientContext";
 import { buildTallyXml } from "@/lib/tally/exportXml";
+import { preflightVouchers, hasBlockingIssues } from "@/lib/tally/preflight";
 import { withRouteLogging } from "@/lib/trace";
 
 /**
@@ -36,6 +37,32 @@ async function postTallyExport(req: Request) {
       return NextResponse.json({ error: "No approved vouchers to export" }, { status: 404 });
     }
 
+    // Tally reports import failures only in Tally.imp or an All Exceptions
+    // report, so catch what we can before the file leaves here.
+    const issues = preflightVouchers(
+      vouchers.map((v) => ({
+        id: v.id,
+        date: v.date,
+        invoiceNumber: v.invoice?.invoiceNumber,
+        lines: v.lines.map((l) => ({
+          ledgerName: l.ledgerNameSnapshot,
+          debit: l.debit,
+          credit: l.credit,
+        })),
+      }))
+    );
+
+    if (hasBlockingIssues(issues)) {
+      return NextResponse.json(
+        {
+          error: "Some vouchers would be rejected by Tally",
+          issues: issues.filter((i) => i.severity === "error"),
+          warnings: issues.filter((i) => i.severity === "warning"),
+        },
+        { status: 422 }
+      );
+    }
+
     const ledgerIds = [
       ...new Set(vouchers.flatMap((v) => v.lines.map((l) => l.ledgerId).filter(Boolean) as string[])),
     ];
@@ -48,9 +75,12 @@ async function postTallyExport(req: Request) {
       ledgers: ledgers.map((l) => ({
         name: l.name,
         group: l.group,
+        ledgerType: l.ledgerType,
+        gstRate: l.gstRate,
         gstin: l.parentGstin,
       })),
       vouchers: vouchers.map((v) => ({
+        id: v.id,
         voucherType: v.voucherType,
         date: v.date,
         narration: v.narration,
@@ -58,8 +88,11 @@ async function postTallyExport(req: Request) {
         invoiceNumber: v.invoice?.invoiceNumber,
         lines: v.lines.map((l) => ({
           ledgerName: l.ledgerNameSnapshot || "Unknown",
+          role: l.role,
           debit: l.debit,
           credit: l.credit,
+          hsnCode: l.hsnCode,
+          gstRate: l.gstRate,
         })),
       })),
     });
@@ -68,7 +101,7 @@ async function postTallyExport(req: Request) {
       .toISOString()
       .slice(0, 10)}.xml`;
 
-    await prisma.$transaction([
+    const [exportRow] = await prisma.$transaction([
       prisma.tallyExport.create({
         data: {
           userId: user.id,
@@ -91,6 +124,11 @@ async function postTallyExport(req: Request) {
         "Content-Type": "application/xml; charset=utf-8",
         "Content-Disposition": `attachment; filename="${fileName}"`,
         "X-Export-Count": String(vouchers.length),
+        "X-Export-Warnings": String(issues.length),
+        // The connector reports Tally's verdict back against this id via
+        // POST /api/export/tally/result. Without it the round trip cannot close.
+        "X-Export-Id": exportRow.id,
+        "Access-Control-Expose-Headers": "X-Export-Id, X-Export-Count, X-Export-Warnings",
       },
     });
   } catch (error) {

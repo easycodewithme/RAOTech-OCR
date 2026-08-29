@@ -11,12 +11,12 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  clerkId   String   @unique
-  email     String   @unique
-  name      String?
-  plan      Plan     @default(FREE)
-  role      UserRole @default(CA)
+  id      String   @id @default(uuid())
+  clerkId String   @unique
+  email   String   @unique
+  name    String?
+  plan    Plan     @default(FREE)
+  role    UserRole @default(CA)
 
   activeClientId String?
   activeClient   Client? @relation("ActiveClient", fields: [activeClientId], references: [id], onDelete: SetNull)
@@ -33,6 +33,19 @@ model User {
   tallyExports   TallyExport[]
   tasks          Task[]          @relation("AssignedTasks")
   intakeLinks    IntakeLink[]
+
+  tallyCompanies   TallyCompany[]
+  stockItems       StockItem[]
+  excelUploads     ExcelUpload[]
+  mappingTemplates MappingTemplate[]
+  connectorDevices ConnectorDevice[]
+  pairingCodes     PairingCode[]
+  syncJobs         SyncJob[]
+
+  ownedOrgs       Organization[]   @relation("OrgOwner")
+  orgMemberships  OrgMember[]
+  sentInvites     TeamInvitation[] @relation("SentInvitations")
+  acceptedInvites TeamInvitation[] @relation("AcceptedInvitations")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -55,6 +68,7 @@ model Client {
   members        ClientMember[]
   invoices       Invoice[]
   ledgers        Ledger[]
+  stockItems     StockItem[]
   ledgerMappings LedgerMapping[]
   mappingRules   MappingRule[]
   vouchers       Voucher[]
@@ -64,6 +78,14 @@ model Client {
   intakeLinks    IntakeLink[]
   tasks          Task[]
 
+  // `tallyCompany` above is the legacy free-text company name pasted into
+  // <SVCURRENTCOMPANY> with no validation. `tallyLink` is the replacement: a
+  // registered company with a GUID and a financial year to bound dates against.
+  tallyLink        TallyCompany?
+  excelUploads     ExcelUpload[]
+  mappingTemplates MappingTemplate[]
+  syncJobs         SyncJob[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -72,12 +94,12 @@ model Client {
 }
 
 model ClientMember {
-  id       String       @id @default(uuid())
+  id       String     @id @default(uuid())
   clientId String
-  client   Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client   Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
   userId   String
-  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role     MemberRole   @default(CLERK)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     MemberRole @default(CLERK)
 
   createdAt DateTime @default(now())
 
@@ -86,58 +108,59 @@ model ClientMember {
 }
 
 model Invoice {
-  id             String        @id @default(uuid())
-  userId         String
-  user           User          @relation(fields: [userId], references: [id])
-  clientId       String
-  client         Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  fileUrl        String
-  status         InvoiceStatus @default(PENDING)
+  fileUrl String
+  status  InvoiceStatus @default(PENDING)
 
-  invoiceNumber  String?
-  date           DateTime?
-  totalAmount    Float?
-  taxAmount      Float?
+  invoiceNumber String?
+  date          DateTime?
+  totalAmount   Float?
+  taxAmount     Float?
 
-  vendor         String?
-  vendorGstin    String?
-  vendorAddress  String?
-  vendorPhone    String?
+  vendor        String?
+  vendorGstin   String?
+  vendorAddress String?
+  vendorPhone   String?
 
-  customerName   String?
-  customerGstin  String?
+  customerName  String?
+  customerGstin String?
 
-  subtotal       Float?
-  cgst           Float?
-  sgst           Float?
-  igst           Float?
-  discount       Float?
+  subtotal Float?
+  cgst     Float?
+  sgst     Float?
+  igst     Float?
+  cess     Float?
+  discount Float?
 
-  gstValid       Boolean?
-  gstState       String?
+  gstValid        Boolean?
+  gstState        String?
   validationFlags Json?
 
   ocrEngine      String?
   processingTime Float?
 
-  extractedData  Json?
-  items          Json?
+  extractedData Json?
+  items         Json?
 
-  documentType   String? // PURCHASE | SALE | CREDIT_NOTE | DEBIT_NOTE | RECEIPT | BANK
-  isDuplicate    Boolean @default(false)
-  duplicateOfId  String?
+  documentType  String? // PURCHASE | SALE | CREDIT_NOTE | DEBIT_NOTE | RECEIPT | BANK
+  isDuplicate   Boolean @default(false)
+  duplicateOfId String?
 
   // E-invoice / e-way bill (optional fields)
-  irn            String?
-  ackNo          String?
-  ewayBillNo     String?
+  irn        String?
+  ackNo      String?
+  ewayBillNo String?
 
-  voucher        Voucher?
-  reconMatches   GstReconMatch[]
+  voucher      Voucher?
+  reconMatches GstReconMatch[]
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId, clientId])
   @@index([userId, clientId, createdAt])
@@ -146,11 +169,11 @@ model Invoice {
 }
 
 model Ledger {
-  id          String      @id @default(uuid())
-  userId      String
-  user        User        @relation(fields: [userId], references: [id])
-  clientId    String
-  client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   name        String
   group       LedgerGroup
@@ -159,6 +182,18 @@ model Ledger {
   isSeeded    Boolean     @default(false)
   isSystem    Boolean     @default(false)
   parentGstin String?
+
+  // Tally identity. Populated by MASTER_PULL and by a successful MASTER_CREATE.
+  // tallyGuid is the join key for posting (D3): Tally names are case-sensitive,
+  // tolerate trailing whitespace and get renamed, so matching on `name` is the
+  // single largest source of push failures in this product category.
+  tallyCompanyId String?
+  tallyCompany   TallyCompany? @relation(fields: [tallyCompanyId], references: [id], onDelete: SetNull)
+  tallyGuid      String?
+  tallyName      String?
+  tallyParent    String?
+  tallyReserved  Boolean       @default(false)
+  tallySyncedAt  DateTime?
 
   mappings     LedgerMapping[]
   ruleTargets  MappingRule[]
@@ -169,20 +204,22 @@ model Ledger {
   updatedAt DateTime @updatedAt
 
   @@unique([userId, clientId, name])
+  @@unique([tallyCompanyId, tallyGuid])
   @@index([userId, clientId, ledgerType])
+  @@index([tallyCompanyId])
 }
 
 model LedgerMapping {
-  id         String       @id @default(uuid())
-  userId     String
-  user       User         @relation(fields: [userId], references: [id])
-  clientId   String
-  client     Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  matchType  MatchKeyType // GSTIN | VENDOR_NAME | NARRATION
-  matchKey   String
-  ledgerId   String
-  ledger     Ledger       @relation(fields: [ledgerId], references: [id])
+  matchType MatchKeyType // GSTIN | VENDOR_NAME | NARRATION
+  matchKey  String
+  ledgerId  String
+  ledger    Ledger       @relation(fields: [ledgerId], references: [id])
 
   hitCount   Int      @default(1)
   lastUsedAt DateTime @default(now())
@@ -195,16 +232,31 @@ model LedgerMapping {
 }
 
 model MappingRule {
-  id       String   @id @default(uuid())
+  id       String @id @default(uuid())
   userId   String
-  user     User     @relation(fields: [userId], references: [id])
+  user     User   @relation(fields: [userId], references: [id])
   clientId String
-  client   Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
+  /// Which resolver reads this rule.
+  ///
+  /// `resolveLedgersForInvoice` reads every enabled rule for the workspace, so
+  /// without this a bank rule would silently start deciding ledgers for scanned
+  /// bills. Defaults to INVOICE, which is what every pre-existing row is.
+  scope    RuleScope @default(INVOICE)
   ruleType RuleType
   pattern  String
-  ledgerId String
-  ledger   Ledger   @relation(fields: [ledgerId], references: [id])
+
+  /// The target ledger by id — the invoice rules' way.
+  ledgerId String?
+  ledger   Ledger? @relation(fields: [ledgerId], references: [id])
+
+  /// The target ledger by NAME — the bank rules' way, and the reason a ruleset
+  /// is portable. A `Ledger` is scoped `@@unique([userId, clientId, name])`, so
+  /// an id is meaningless in another workspace; cloning an id-based ruleset onto
+  /// a second client would fail its foreign key or point at nothing. Names
+  /// re-resolve, and an unresolvable one is reported rather than substituted.
+  ledgerName String?
 
   priority Int     @default(100)
   enabled  Boolean @default(true)
@@ -213,6 +265,7 @@ model MappingRule {
   updatedAt DateTime @updatedAt
 
   @@index([userId, clientId, enabled, priority])
+  @@index([userId, clientId, scope, enabled, priority])
 }
 
 model Voucher {
@@ -222,8 +275,14 @@ model Voucher {
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  invoiceId String  @unique
-  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  /// The document this voucher came from, when there was one.
+  ///
+  /// Null for vouchers built from a bank statement line or a spreadsheet row —
+  /// there is no bill behind a Payment, a Receipt or a journal. The unique
+  /// constraint still holds one voucher to one invoice, because Postgres does
+  /// not consider two NULLs equal.
+  invoiceId String?  @unique
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   voucherType VoucherType
   status      VoucherStatus @default(DRAFT)
@@ -239,7 +298,10 @@ model Voucher {
   approvedAt    DateTime?
   approvedBy    String?
 
-  lines VoucherLine[]
+  lines   VoucherLine[]
+  syncs   VoucherSync[]
+  /// Set when this voucher came from a bank statement line rather than a bill.
+  bankTxn BankTxn?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -255,12 +317,12 @@ model VoucherLine {
   voucher   Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
 
   ledgerId           String?
-  ledger             Ledger?  @relation(fields: [ledgerId], references: [id])
+  ledger             Ledger? @relation(fields: [ledgerId], references: [id])
   ledgerNameSnapshot String?
 
-  role       LineRole
-  debit      Float      @default(0)
-  credit     Float      @default(0)
+  role   LineRole
+  debit  Float    @default(0)
+  credit Float    @default(0)
 
   confidence Float?
   mappedVia  MappedVia?
@@ -268,24 +330,94 @@ model VoucherLine {
   gstRate    Float?
   sortOrder  Int        @default(0)
 
+  /// The inventory allocation, when this line moves stock.
+  ///
+  /// A line carrying a `stockItemId` is emitted as an `ALLINVENTORYENTRIES.LIST`
+  /// with its accounting ledger nested inside as an `ACCOUNTINGALLOCATIONS.LIST`.
+  /// A line without one is a plain `ALLLEDGERENTRIES.LIST`, exactly as before.
+  /// The nesting is not cosmetic: emit the ledger both nested and as a sibling
+  /// and Tally accepts a voucher that debits the purchase account twice.
+  stockItemId   String?
+  stockItem     StockItem? @relation(fields: [stockItemId], references: [id], onDelete: SetNull)
+  /// Name at the time of posting, for the same reason ledgers keep one.
+  stockItemName String?
+  quantity      Float?
+  /// Unit as Tally spells it. Tally wants "10 Nos", not "10".
+  unit          String?
+  rate          Float?
+
   @@index([voucherId])
   @@index([ledgerId])
+  @@index([stockItemId])
+}
+
+/// A stock item master, mirrored from or pushed to a Tally company.
+///
+/// Deliberately thin. This is not an inventory system — Tally is, and the
+/// client's stock lives there. What we need is only enough to (a) create the
+/// master Tally refuses to invent, and (b) name it correctly on a voucher.
+/// Anything more (godowns, batches, reorder levels, valuation) belongs on the
+/// other side of the connector.
+model StockItem {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  name String
+  /// Base unit as Tally spells it. Null blocks the Tally create rather than
+  /// guessing: a base unit cannot be altered once stock has moved against it.
+  unit    String?
+  hsnCode String?
+  gstRate Float?
+  alias   String?
+
+  openingQty  Float?
+  openingRate Float?
+
+  tallyCompanyId String?
+  tallyCompany   TallyCompany? @relation(fields: [tallyCompanyId], references: [id], onDelete: SetNull)
+  tallyGuid      String?
+  tallyName      String?
+  tallySyncedAt  DateTime?
+
+  lines VoucherLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, clientId, name])
+  @@unique([tallyCompanyId, tallyGuid])
+  @@index([userId, clientId])
 }
 
 model BankStatement {
-  id            String   @id @default(uuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id])
-  clientId      String
-  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   fileName      String
   bankName      String?
   accountNumber String?
   bankLedgerId  String?
-  status        String   @default("DRAFT") // DRAFT | SYNCED | EXPORTED_DEMO
+  status        String  @default("DRAFT") // DRAFT | SYNCED | EXPORTED_DEMO
 
-  txns          BankTxn[]
+  /// Opening and closing balance as printed on the statement.
+  ///
+  /// Used to reject a statement whose rows do not reconcile from one to the
+  /// other, rather than importing something quietly wrong. It is a cheap check
+  /// and the strongest trust signal a bank import can give an accountant: a
+  /// parse that drops or duplicates a row shows up here and nowhere else.
+  openingBalance Float?
+  closingBalance Float?
+  /// Running-balance check result, so the UI can explain a rejection.
+  balanceOk      Boolean?
+  balanceNote    String?
+
+  txns BankTxn[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -302,41 +434,62 @@ model BankTxn {
   date        DateTime?
   description String
   refNo       String?
-  withdrawal  Float    @default(0)
-  deposit     Float    @default(0)
+  withdrawal  Float     @default(0)
+  deposit     Float     @default(0)
   balance     Float?
 
-  classification BankTxnClass?
+  classification     BankTxnClass?
   ledgerId           String?
-  ledger             Ledger?  @relation(fields: [ledgerId], references: [id])
+  ledger             Ledger?       @relation(fields: [ledgerId], references: [id])
   ledgerNameSnapshot String?
   confidence         Float?
-  sortOrder          Int      @default(0)
+  sortOrder          Int           @default(0)
+
+  /// One statement line split across several ledgers:
+  /// `[{ ledgerId, ledgerName, amount }]`. Null means the single `ledgerId`
+  /// above takes the whole amount. Splits must total the transaction exactly —
+  /// balancing a shortfall with a round-off plug would make the books quietly
+  /// wrong by whatever was left unallocated.
+  allocations Json?
+
+  /// Ledger chosen and committed, but not yet sent to Tally.
+  ///
+  /// Choosing and sending are separate steps on purpose. An accountant works
+  /// down a statement over a session, and a half-assigned statement must be
+  /// resumable without posting anything. This is the gate between the two.
+  saved   Boolean   @default(false)
+  savedAt DateTime?
+
+  /// The voucher this line became. Set once it has been built; the voucher then
+  /// carries its own Tally sync state like any other.
+  voucherId String?  @unique
+  voucher   Voucher? @relation(fields: [voucherId], references: [id], onDelete: SetNull)
 
   @@index([statementId])
   @@index([ledgerId])
+  @@index([statementId, saved])
 }
 
 model Gst2bUpload {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id])
-  clientId   String
-  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  fileName   String
-  period     String?  // YYYY-MM
-  rowCount   Int      @default(0)
-  matched    Int      @default(0)
-  mismatched Int      @default(0)
-  missingBooks Int    @default(0)
-  missing2b  Int      @default(0)
-  itcEligible Float   @default(0)
-  itcAtRisk  Float    @default(0)
-  rawSummary Json?
+  fileName     String
+  period       String? // YYYY-MM
+  rowCount     Int     @default(0)
+  matched      Int     @default(0)
+  mismatched   Int     @default(0)
+  missingBooks Int     @default(0)
+  missing2b    Int     @default(0)
+  itcEligible  Float   @default(0)
+  itcAtRisk    Float   @default(0)
+  rawSummary   Json?
 
-  rows       Gst2bRow[]
-  matches    GstReconMatch[]
+  rows    Gst2bRow[]
+  matches GstReconMatch[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -345,9 +498,9 @@ model Gst2bUpload {
 }
 
 model Gst2bRow {
-  id         String      @id @default(uuid())
-  uploadId   String
-  upload     Gst2bUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  id       String      @id @default(uuid())
+  uploadId String
+  upload   Gst2bUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
 
   supplierGstin String?
   supplierName  String?
@@ -362,20 +515,20 @@ model Gst2bRow {
   invoiceType   String?
   raw           Json?
 
-  match         GstReconMatch?
+  match GstReconMatch?
 
   @@index([uploadId])
   @@index([supplierGstin, invoiceNumber])
 }
 
 model GstReconMatch {
-  id          String      @id @default(uuid())
-  uploadId    String
-  upload      Gst2bUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
-  gst2bRowId  String?     @unique
-  gst2bRow    Gst2bRow?   @relation(fields: [gst2bRowId], references: [id], onDelete: SetNull)
-  invoiceId   String?
-  invoice     Invoice?    @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  id         String      @id @default(uuid())
+  uploadId   String
+  upload     Gst2bUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  gst2bRowId String?     @unique
+  gst2bRow   Gst2bRow?   @relation(fields: [gst2bRowId], references: [id], onDelete: SetNull)
+  invoiceId  String?
+  invoice    Invoice?    @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
 
   status      ReconStatus
   taxableDiff Float       @default(0)
@@ -388,11 +541,11 @@ model GstReconMatch {
 }
 
 model TallyExport {
-  id           String   @id @default(uuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id])
-  clientId     String
-  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   voucherIds   String[]
   fileName     String
@@ -406,14 +559,14 @@ model TallyExport {
 }
 
 model IntakeLink {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
   clientId  String
-  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  token     String   @unique @default(uuid())
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  token     String    @unique @default(uuid())
   label     String?
-  enabled   Boolean  @default(true)
+  enabled   Boolean   @default(true)
   expiresAt DateTime?
 
   createdAt DateTime @default(now())
@@ -487,11 +640,27 @@ enum MatchKeyType {
   NARRATION
 }
 
+enum RuleScope {
+  /// Read by `resolveLedgersForInvoice` for bills and spreadsheet rows.
+  INVOICE
+  /// Read by the banking rule list for statement lines.
+  BANK
+}
+
 enum RuleType {
   GSTIN_EQUALS
   VENDOR_NAME_CONTAINS
   VENDOR_NAME_EQUALS
   HSN_EQUALS
+
+  // Bank rules. `pattern` holds the narration fragment, the amount written as
+  // text, or PAYMENT / RECEIPT / CONTRA.
+  NARRATION_CONTAINS
+  NARRATION_EQUALS
+  AMOUNT_GT
+  AMOUNT_LT
+  AMOUNT_EQUALS
+  TXN_TYPE_EQUALS
 }
 
 enum VoucherType {
@@ -518,8 +687,11 @@ enum LineRole {
   CGST
   SGST
   IGST
+  CESS
   ROUND_OFF
   DISCOUNT
+  /// The bank or cash side of a Payment, Receipt or Contra voucher.
+  BANK
 }
 
 enum MappedVia {
@@ -563,3 +735,504 @@ enum InvoiceStatus {
   PROCESSED
   FAILED
 }
+
+// ---------------------------------------------------------------------------
+// Tally integration
+//
+// The connector loop: a workspace registers one TallyPrime company, a desktop
+// device pairs to the account, the cloud queues SyncJobs, the device long-polls
+// for them, talks to Tally over its local HTTP-XML gateway, and reports each
+// voucher's outcome back. The cloud never dials the desktop, so this works
+// behind NAT, over RDP and inside a Tally-cloud session.
+// ---------------------------------------------------------------------------
+
+/// A TallyPrime company registered against a workspace.
+/// One per Client: a firm with several sets of books creates several Clients,
+/// which the existing workspace switcher already handles.
+model TallyCompany {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId String @unique
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  /// Exactly as Tally reports it. Sent verbatim as <SVCURRENTCOMPANY>; a
+  /// mismatch here is silently treated by Tally as "no such company".
+  companyName String
+  /// Tally's own company GUID, when the master pull could read it.
+  companyGuid String?
+
+  /// Books-beginning and financial-year bounds, read from Tally. Vouchers dated
+  /// outside these are rejected outright, so pre-flight checks against them.
+  booksFrom DateTime?
+  fyStart   DateTime?
+  fyEnd     DateTime?
+
+  status        TallyCompanyStatus @default(UNSYNCED)
+  lastSyncedAt  DateTime?
+  /// Ledgers seen by the last successful MASTER_PULL, for the sync banner.
+  ledgerCount   Int                @default(0)
+  /// Set when a pull or push reveals Tally is running unlicensed. Tally reports
+  /// education-mode rejections with a *blank* reason, so it has to be detected
+  /// and surfaced explicitly or the user is shown an empty error.
+  educationMode Boolean            @default(false)
+
+  ledgers      Ledger[]
+  stockItems   StockItem[]
+  syncJobs     SyncJob[]
+  voucherSyncs VoucherSync[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum TallyCompanyStatus {
+  UNSYNCED
+  SYNCING
+  READY
+  ERROR
+}
+
+/// A paired desktop connector. Bound to a user and a machine, never to a
+/// password: a revoked device stops working without disturbing the login, and a
+/// password change does not un-pair the desktop.
+model ConnectorDevice {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  deviceName String
+  /// Stable per-machine identifier, so re-pairing the same PC replaces its
+  /// device row instead of accumulating duplicates.
+  machineId  String?
+
+  /// Only the SHA-256 of the bearer token is stored. The plaintext is shown to
+  /// the connector once, at pairing, and never again.
+  tokenHash   String @unique
+  /// First few characters, so the settings page can name a device's token.
+  tokenPrefix String
+
+  tallyHost  String  @default("localhost")
+  tallyPort  Int     @default(9000)
+  appVersion String?
+  osVersion  String?
+
+  /// Last state the device reported for its local Tally gateway.
+  tallyReachable Boolean?
+  tallyMessage   String?
+
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+
+  jobs SyncJob[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, revokedAt])
+}
+
+/// Short-lived one-time code shown in the web UI and typed into the connector.
+/// Created already bound to a user, so claiming it needs no credentials in the
+/// desktop binary and no password ever reaches the machine.
+model PairingCode {
+  id     String @id @default(uuid())
+  code   String @unique
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  claimedAt DateTime?
+  deviceId  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// The polled work queue. The connector asks for jobs; nothing is ever pushed
+/// to it.
+model SyncJob {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  tallyCompanyId String?
+  tallyCompany   TallyCompany? @relation(fields: [tallyCompanyId], references: [id], onDelete: SetNull)
+
+  deviceId String?
+  device   ConnectorDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  kind  SyncJobKind
+  state SyncJobState @default(QUEUED)
+
+  /// Request body handed to the device. For VOUCHER_PUSH this is the complete
+  /// Tally envelope: the cloud owns XML generation and the device is a relay,
+  /// so there is exactly one XML implementation and it is unit-tested.
+  payload Json
+  /// Whatever the device read back, stored verbatim for support.
+  result  Json?
+  error   String?
+
+  attempts Int @default(0)
+
+  createdAt  DateTime  @default(now())
+  claimedAt  DateTime?
+  finishedAt DateTime?
+
+  voucherSyncs VoucherSync[]
+
+  /// The claim query: oldest queued job for a user.
+  @@index([userId, state, createdAt])
+  @@index([clientId, state])
+}
+
+enum SyncJobKind {
+  /// Read companies, ledgers and groups out of Tally into the workspace.
+  MASTER_PULL
+  /// Create the ledgers a batch needs, before the vouchers that reference them.
+  MASTER_CREATE
+  /// Post vouchers.
+  VOUCHER_PUSH
+  /// Remove previously posted vouchers, resolved by our REMOTEID.
+  VOUCHER_DELETE
+  /// Liveness probe behind the web UI's "Test Connection" button.
+  PING
+}
+
+enum SyncJobState {
+  QUEUED
+  CLAIMED
+  DONE
+  FAILED
+  CANCELLED
+}
+
+/// Per-voucher, per-company posting outcome. `TallyExport.voucherIds` cannot
+/// represent a batch where three vouchers posted and one was rejected, which is
+/// the normal case: Tally does not abort a batch on the first failure, and a
+/// rejected voucher still leaves masters created earlier in the same payload.
+model VoucherSync {
+  id        String  @id @default(uuid())
+  voucherId String
+  voucher   Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  tallyCompanyId String
+  tallyCompany   TallyCompany @relation(fields: [tallyCompanyId], references: [id], onDelete: Cascade)
+
+  jobId String?
+  job   SyncJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// The REMOTEID we send. Verified empirically as Tally's idempotency key:
+  /// the same id re-imported ALTERs the voucher, a different id CREATEs a
+  /// second one, and ACTION="Delete" resolves by it. This is what makes
+  /// re-posting safe and "Delete From Tally" possible at all.
+  remoteId String @unique
+
+  state VoucherSyncState @default(QUEUED)
+
+  /// Tally's own identifiers, echoed back on import. Treat as opaque: Tally
+  /// overrides the voucher number we send with its own auto-numbering, and
+  /// exports a REMOTEID different from the one it matches imports on. Never
+  /// round-trip-compare these.
+  tallyMasterId      Int?
+  tallyVoucherNumber String?
+
+  /// Tally's verbatim rejection reason, e.g. "Ledger 'Acme' does not exist!".
+  /// Shown inline per voucher rather than sending the user to Tally.imp.
+  error    String?
+  attempts Int     @default(0)
+
+  lastAttemptAt DateTime?
+  syncedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([voucherId, tallyCompanyId])
+  @@index([tallyCompanyId, state])
+  @@index([jobId])
+}
+
+enum VoucherSyncState {
+  /// Not yet handed to a device.
+  QUEUED
+  /// A device has claimed the job carrying it.
+  SENDING
+  /// In Tally's books.
+  POSTED
+  /// Tally rejected it; `error` says why.
+  FAILED
+  /// Removed from Tally by us.
+  DELETED
+}
+
+// ---------------------------------------------------------------------------
+// Excel / CSV ingestion
+//
+// Spreadsheets are how CA firms actually hold their data — the competitor's own
+// help centre spends 46 of 158 articles on spreadsheet-to-voucher mapping and
+// only 2 on OCR. Nearly all 46 exist because their mapper cannot infer sheet
+// layout, so accountants reshape the sheet by hand and pick a matching article.
+//
+// Parsed rows become NormalizedInvoice and rejoin the existing
+// resolveLedger -> buildVoucher -> createVoucher path. There is deliberately no
+// second accounting path and no parallel status machine: once committed, a row
+// is an Invoice plus a DRAFT Voucher and every existing screen already knows
+// how to review, approve, push and track it.
+// ---------------------------------------------------------------------------
+
+/// One uploaded spreadsheet, from file to committed vouchers.
+model ExcelUpload {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  fileName  String
+  /// Which sheet in the workbook. Their docs require data on the first sheet;
+  /// we detect instead, because "the first sheet" is a rule users break.
+  sheetName String?
+
+  docType  ExcelDocType
+  itemMode ExcelItemMode @default(WITHOUT_ITEM)
+
+  /// Zero-based row holding the headers. Detected, not assumed — a header on
+  /// row 1 is a rule the competitor has to state and users still get wrong.
+  headerRowIndex    Int      @default(0)
+  headers           String[]
+  /// Stable hash of the normalised header row. The key a saved template is
+  /// found by, and what makes month two of a client one click.
+  headerFingerprint String?
+
+  totalRows     Int               @default(0)
+  committedRows Int               @default(0)
+  skippedRows   Int               @default(0)
+  status        ExcelUploadStatus @default(UPLOADED)
+  error         String?
+
+  /// The mapping actually used, frozen at commit time so a later template edit
+  /// cannot silently rewrite the history of what was posted.
+  mapping    Json?
+  templateId String?
+  template   MappingTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  /// Row-level problems found during validation, kept for the review screen.
+  issues Json?
+
+  /// The parsed cell grid, held between mapping and commit.
+  ///
+  /// Mapping is iterative — the user adjusts columns and re-previews several
+  /// times — and re-uploading the file for each pass would be miserable. We do
+  /// not have blob storage wired, so the rows live here and are **cleared at
+  /// commit**, once they have become Invoice and Voucher rows that the rest of
+  /// the app already understands. Keeping them afterwards would be a second
+  /// copy of the same data drifting out of sync with the vouchers.
+  rows Json?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  committedAt DateTime?
+
+  @@index([userId, clientId, status])
+  @@index([clientId, createdAt])
+}
+
+enum ExcelDocType {
+  PURCHASE
+  PURCHASE_RETURN
+  SALE
+  SALE_RETURN
+  JOURNAL
+
+  /// Bulk master upload. These produce `Ledger` / `StockItem` rows rather than
+  /// vouchers, and reuse the whole spreadsheet pipeline to get there.
+  LEDGER_MASTER
+  ITEM_MASTER
+}
+
+/// Their product calls this three different things — "With Item / Without Item",
+/// "Item Invoice / Accounting Invoice", and a Configuration checkbox called
+/// "Item Allocation" in the Journal module. One control everywhere here.
+enum ExcelItemMode {
+  WITHOUT_ITEM
+  WITH_ITEM
+}
+
+enum ExcelUploadStatus {
+  UPLOADED
+  /// Headers read, awaiting a mapping.
+  MAPPING
+  /// Mapped and validated; rows previewed but nothing written yet.
+  READY
+  /// Invoices and draft vouchers created.
+  COMMITTED
+  FAILED
+}
+
+/// A remembered column layout.
+///
+/// The moat is the memory, not the mapping screen. Stored per client, but
+/// looked up across the whole firm: a firm that has mapped one client's Tally
+/// export has effectively mapped every client using the same accounting
+/// package. The competitor keys on exact header text and ships no template
+/// library at all — for Meesho, Ajio, Zerodha, Groww and three others their
+/// answer is a help article containing a table the accountant retypes.
+model MappingTemplate {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  name     String
+  docType  ExcelDocType
+  itemMode ExcelItemMode @default(WITHOUT_ITEM)
+
+  /// Normalised-header hash. Case, whitespace and punctuation are folded before
+  /// hashing, so "Invoice No." and "invoice no" are the same layout — the
+  /// brittleness that forces their users to "manually adjust the mapping".
+  headerFingerprint String
+  headers           String[]
+
+  mapping Json
+
+  /// Same learning signal as LedgerMapping: what gets used, wins.
+  hitCount   Int      @default(1)
+  lastUsedAt DateTime @default(now())
+
+  /// Set for layouts we ship rather than ones the user taught us.
+  isBuiltIn Boolean @default(false)
+  /// e.g. "meesho", "zerodha" — lets a built-in be recognised and named.
+  sourceKey String?
+
+  uploads ExcelUpload[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, clientId, docType, headerFingerprint])
+  @@index([userId, docType, headerFingerprint])
+  @@index([clientId, lastUsedAt])
+}
+
+// ── BILLING & SUBSCRIPTIONS ──
+
+model Organization {
+  id           String       @id @default(uuid())
+  name         String
+  slug         String       @unique
+  ownerId      String
+  owner        User         @relation("OrgOwner", fields: [ownerId], references: [id])
+
+  plan         OrgPlan      @default(INDIVIDUAL)
+  billingCycle BillingCycle @default(MONTHLY)
+  maxSeats     Int          @default(1)
+
+  subscriptions Subscription[]
+  members       OrgMember[]
+  invitations   TeamInvitation[]
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([ownerId])
+}
+
+model Subscription {
+  id                String       @id @default(uuid())
+  orgId             String
+  org               Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  razorpayOrderId   String?      @unique
+  razorpayPaymentId String?      @unique
+  razorpaySignature String?
+
+  plan              OrgPlan
+  billingCycle      BillingCycle
+  seatCount         Int          @default(1)
+  pricePerSeat      Int
+  totalAmount       Int
+  currency          String       @default("INR")
+
+  status            SubStatus    @default(PENDING)
+  paidAt            DateTime?
+  expiresAt         DateTime?
+
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([orgId, status])
+}
+
+// ── TEAM INVITATIONS ──
+
+model TeamInvitation {
+  id           String       @id @default(uuid())
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  email        String
+  role         MemberRole   @default(CLERK)
+  token        String       @unique @default(uuid())
+
+  status       InviteStatus @default(PENDING)
+  invitedById  String
+  invitedBy    User         @relation("SentInvitations", fields: [invitedById], references: [id])
+
+  acceptedById String?
+  acceptedBy   User?        @relation("AcceptedInvitations", fields: [acceptedById], references: [id])
+  acceptedAt   DateTime?
+  expiresAt    DateTime
+
+  createdAt    DateTime     @default(now())
+
+  @@unique([orgId, email])
+  @@index([token])
+  @@index([orgId, status])
+}
+
+model OrgMember {
+  id       String       @id @default(uuid())
+  orgId    String
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     MemberRole   @default(CLERK)
+
+  joinedAt DateTime     @default(now())
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
+enum OrgPlan {
+  INDIVIDUAL
+  ENTERPRISE
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum SubStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  FAILED
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+

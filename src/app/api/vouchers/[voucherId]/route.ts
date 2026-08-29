@@ -57,6 +57,22 @@ export async function PATCH(
     const body = await req.json();
 
     if (body.voucherType) {
+      /**
+       * Rebuilding means re-deriving the voucher from its source document, so a
+       * voucher that has no document cannot be rebuilt this way. Bank rows and
+       * journals reach here with `invoiceId` null; changing their type is a
+       * banking-module action (it decides Payment / Receipt / Contra), not an
+       * invoice re-derivation.
+       */
+      if (!voucher.invoiceId) {
+        return NextResponse.json(
+          {
+            error:
+              "This voucher was not built from a document, so its type cannot be changed here. Change it on the statement row it came from and build again.",
+          },
+          { status: 409 }
+        );
+      }
       const rebuilt = await createDraftVoucherForInvoice(user.id, voucher.invoiceId, {
         voucherTypeOverride: body.voucherType as VoucherType,
         clientId: client.id,

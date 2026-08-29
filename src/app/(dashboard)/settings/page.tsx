@@ -21,7 +21,9 @@ export default async function SettingsPage() {
   const [seededLedgers, rules, mappingStats] = await Promise.all([
     prisma.ledger.findMany(ledgerSelect),
     prisma.mappingRule.findMany({
-      where: { userId: user.id, clientId: client.id },
+      // This screen manages the invoice ledger rules. Bank rules live in the
+      // banking module and target their ledger by name, not by id.
+      where: { userId: user.id, clientId: client.id, scope: "INVOICE" },
       orderBy: { priority: "asc" },
       include: { ledger: { select: { id: true, name: true } } },
     }),
@@ -47,7 +49,9 @@ export default async function SettingsPage() {
   return (
     <LedgerRuleManager
       ledgers={ledgers}
-      rules={rules}
+      rules={rules.filter(
+        (r): r is typeof r & { ledger: { id: string; name: string } } => !!r.ledger
+      )}
       clientName={client.name}
       mappingAccuracy={accuracy}
     />

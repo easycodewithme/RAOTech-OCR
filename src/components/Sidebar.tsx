@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   UploadCloud,
+  FileSpreadsheet,
   MessageSquare,
   MessagesSquare,
   LogOut,
@@ -16,25 +17,33 @@ import {
   Link2,
   ClipboardList,
   Filter,
+  Building2,
+  PlugZap,
   Settings,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { SignOutButton } from "@clerk/nextjs";
 import { extraPagesEnabled } from "@/lib/featureFlags";
 
 const routes = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard", color: "text-sky-500" },
+  // Above the per-client screens on purpose: this is the one that answers
+  // "which client needs me", and everything below it assumes that is settled.
+  { label: "All Clients", icon: Building2, href: "/clients", color: "text-amber-300" },
   { label: "Pipeline", icon: Kanban, href: "/pipeline", color: "text-indigo-400", localOnly: true },
   { label: "Upload", icon: UploadCloud, href: "/upload", color: "text-violet-500" },
   { label: "Review queue", icon: Filter, href: "/review", color: "text-rose-400", localOnly: true },
+  { label: "Sheet Upload", icon: FileSpreadsheet, href: "/sheets", color: "text-teal-500" },
   { label: "Transactions", icon: ListChecks, href: "/transactions", color: "text-emerald-500" },
   { label: "GST Recon", icon: Scale, href: "/gst", color: "text-orange-400", localOnly: true },
   { label: "Reports", icon: BarChart3, href: "/reports", color: "text-cyan-400", localOnly: true },
-  { label: "Ledgers & Rules", icon: BookOpen, href: "/settings", color: "text-amber-500" },
+  // exact: /settings/tally is its own entry and must not light this one up too.
+  { label: "Ledgers & Rules", icon: BookOpen, href: "/settings", color: "text-amber-500", exact: true },
+  { label: "Tally Connection", icon: PlugZap, href: "/settings/tally", color: "text-emerald-400" },
   { label: "Intake Links", icon: Link2, href: "/intake", color: "text-pink-400", localOnly: true },
   { label: "Tasks", icon: ClipboardList, href: "/tasks", color: "text-lime-400", localOnly: true },
   { label: "AI Assistant", icon: MessageSquare, href: "/chat", color: "text-pink-700" },
-  { label: "Communication", icon: MessagesSquare, href: "/communication", color: "text-teal-400" },
+  // Mock data only — see LOCAL_ONLY_ROUTE_PREFIXES in featureFlags.ts.
+  { label: "Communication", icon: MessagesSquare, href: "/communication", color: "text-teal-400", localOnly: true },
 ];
 
 type SidebarProps = {
@@ -98,7 +107,8 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       >
         {visibleRoutes.map((route) => {
           const isActive =
-            pathname === route.href || pathname.startsWith(route.href + "/");
+            pathname === route.href ||
+            (!("exact" in route && route.exact) && pathname.startsWith(route.href + "/"));
           return (
             <Link
               key={route.href}

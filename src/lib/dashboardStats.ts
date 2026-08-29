@@ -18,6 +18,25 @@ export interface DashboardStats {
   draftCount: number;
   approvedCount: number;
   exportedCount: number;
+  /**
+   * Vouchers Tally refused. The number this whole product exists to keep at
+   * zero, and until now the only way to find it was to open Transactions and
+   * tick a filter you would only think to tick if you already suspected
+   * something was wrong.
+   */
+  syncFailedCount: number;
+  /**
+   * Vouchers a connector took and never reported back on.
+   *
+   * Not the same as failed, and more dangerous: SENDING means a device claimed
+   * the job and we do not know what happened next. The voucher may be sitting
+   * in the client's books already. It is also the state that strands a voucher
+   * permanently if someone deletes the row while it is stuck, so it is worth a
+   * number of its own rather than being folded into "failed".
+   *
+   * Only counted after a grace period — a push in flight is not a problem.
+   */
+  syncStuckCount: number;
   pendingReviewCount: number;
   unmappedParties: number;
   gstInput: number;
@@ -78,6 +97,15 @@ export async function getDashboardData(
         (SELECT COUNT(*)::int FROM "Voucher"
           WHERE "userId" = ${userId} AND "clientId" = ${clientId}
             AND status IN ('EXPORTED_DEMO', 'POSTED')) AS "exportedCount",
+        (SELECT COUNT(*)::int FROM "VoucherSync" vs
+          JOIN "Voucher" v ON v.id = vs."voucherId"
+          WHERE v."userId" = ${userId} AND v."clientId" = ${clientId}
+            AND vs.state = 'FAILED') AS "syncFailedCount",
+        (SELECT COUNT(*)::int FROM "VoucherSync" vs
+          JOIN "Voucher" v ON v.id = vs."voucherId"
+          WHERE v."userId" = ${userId} AND v."clientId" = ${clientId}
+            AND vs.state = 'SENDING'
+            AND vs."lastAttemptAt" < NOW() - INTERVAL '10 minutes') AS "syncStuckCount",
         (SELECT COUNT(*)::int FROM "Voucher" v
           WHERE v."userId" = ${userId} AND v."clientId" = ${clientId} AND v.status = 'DRAFT'
             AND (v."avgConfidence" < 0.7 OR EXISTS (

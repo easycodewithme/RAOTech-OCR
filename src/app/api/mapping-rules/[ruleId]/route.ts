@@ -13,7 +13,7 @@ export async function PATCH(
     const { ruleId } = await params;
 
     const existing = await prisma.mappingRule.findFirst({
-      where: { id: ruleId, userId: user.id, clientId: client.id },
+      where: { id: ruleId, userId: user.id, clientId: client.id, scope: "INVOICE" },
     });
     if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 
@@ -44,7 +44,7 @@ export async function DELETE(
     const { ruleId } = await params;
 
     const existing = await prisma.mappingRule.findFirst({
-      where: { id: ruleId, userId: user.id, clientId: client.id },
+      where: { id: ruleId, userId: user.id, clientId: client.id, scope: "INVOICE" },
     });
     if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 

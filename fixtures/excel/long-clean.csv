@@ -1,0 +1,4 @@
+Invoice No,Invoice Date,Party Name,Taxable Value,CGST,SGST,IGST,Invoice Total
+INV-001,03/04/2026,Acme Traders,"1,23,456.78",900,900,0,"1,25,256.78"
+INV-002,12-04-2026,Bharat Steel,25000,0,0,4500,29500
+INV-003,28.04.2026,Chola Mills,8000,720,720,0,9440

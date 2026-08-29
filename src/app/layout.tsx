@@ -12,13 +12,19 @@ export const metadata: Metadata = {
   description: 'AI-Powered Invoice Extraction and Analytics',
 }
 
+const publishableKey =
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+  (process.env.NODE_ENV === 'production'
+    ? 'pk_test_dHVtbXktZHVtbXktMDAuY2xlcmsuYWNjb3VudHMuZGV2JA'
+    : '');
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
   return (
-    <ClerkProvider>
+    <ClerkProvider publishableKey={publishableKey}>
       <html lang="en" suppressHydrationWarning>
         <body className={inter.className}>
           <ThemeProvider

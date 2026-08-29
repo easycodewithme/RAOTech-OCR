@@ -206,7 +206,10 @@ export async function resolveLedgersForInvoice(
       },
     }),
     prisma.mappingRule.findMany({
-      where: { userId, clientId, enabled: true },
+      // `scope` matters: the same table now also holds the banking rule list,
+      // whose rules match on narration and amount and target a ledger by name.
+      // Without this filter they would start deciding ledgers for scanned bills.
+      where: { userId, clientId, enabled: true, scope: "INVOICE" },
       orderBy: { priority: "asc" },
       select: {
         ruleType: true,
@@ -274,23 +277,45 @@ export async function resolveLedgersForInvoice(
     }
   }
 
-  const ruleAdapter = (r: (typeof rules)[number]): RankRule => ({
-    ruleType: r.ruleType,
-    pattern: r.pattern,
-    ledgerId: r.ledger.id,
-    ledgerName: r.ledger.name,
-    priority: r.priority,
-  });
+  /**
+   * Narrow the rows to the rules this resolver actually understands.
+   *
+   * The `scope` filter above is the real guard, but it lives in a `where`
+   * clause and TypeScript cannot see it. This second pass makes the same
+   * statement in the type system: a rule reaches the ranker only if it is one
+   * of the four invoice rule types and it resolves to a ledger. A bank rule
+   * that somehow arrived here — mis-scoped by a hand-written row, say — is
+   * dropped rather than mapped onto a party by accident.
+   */
+  const invoiceRules: RankRule[] = [];
+  for (const r of rules) {
+    if (!r.ledger) continue;
+    if (
+      r.ruleType !== "GSTIN_EQUALS" &&
+      r.ruleType !== "VENDOR_NAME_CONTAINS" &&
+      r.ruleType !== "VENDOR_NAME_EQUALS" &&
+      r.ruleType !== "HSN_EQUALS"
+    ) {
+      continue;
+    }
+    invoiceRules.push({
+      ruleType: r.ruleType,
+      pattern: r.pattern,
+      ledgerId: r.ledger.id,
+      ledgerName: r.ledger.name,
+      priority: r.priority,
+    });
+  }
 
   const party = rankParty(inv.vendorGstin, normName(inv.vendor), {
-    rules: rules.filter((r) => r.ruleType !== "HSN_EQUALS").map(ruleAdapter),
+    rules: invoiceRules.filter((r) => r.ruleType !== "HSN_EQUALS"),
     gstinMemory,
     nameMemory,
     fuzzyCandidates,
   });
 
   const itemCtx: ItemRankContext = {
-    hsnRules: rules.filter((r) => r.ruleType === "HSN_EQUALS").map(ruleAdapter),
+    hsnRules: invoiceRules.filter((r) => r.ruleType === "HSN_EQUALS"),
     rateLedgers,
     defaultLedger,
   };

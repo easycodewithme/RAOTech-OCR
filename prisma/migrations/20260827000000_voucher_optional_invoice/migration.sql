@@ -1,0 +1,13 @@
+-- A voucher no longer needs an invoice behind it.
+--
+-- Payments, Receipts and Contras come from a bank statement line, and journals
+-- come from a spreadsheet row; neither has a document. Until now both paths
+-- worked around the required FK by writing a synthetic carrier `Invoice`
+-- (`bank://…`, `excel://…`), which then showed up in the invoice list, the
+-- pipeline board and the Tally export as a real bill with a null vendor and a
+-- null invoice number. Dropping NOT NULL removes the need for the carrier.
+--
+-- The unique index stays: Postgres allows any number of NULLs under a UNIQUE
+-- constraint, so "at most one voucher per invoice" still holds for the vouchers
+-- that do have one.
+ALTER TABLE "Voucher" ALTER COLUMN "invoiceId" DROP NOT NULL;

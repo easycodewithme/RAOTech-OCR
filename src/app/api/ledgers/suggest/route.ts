@@ -42,7 +42,9 @@ export async function POST(req: Request) {
         },
       }),
       prisma.mappingRule.findMany({
-        where: { userId: user.id, clientId: client.id, enabled: true },
+        // INVOICE only — the banking rule list shares this table now. See the
+        // matching note in `resolveLedger.ts`.
+        where: { userId: user.id, clientId: client.id, enabled: true, scope: "INVOICE" },
         orderBy: { priority: "asc" },
         select: {
           ruleType: true,
@@ -78,15 +80,26 @@ export async function POST(req: Request) {
       if (n) fuzzyCandidates.push({ id: l.id, name: l.name, norm: n, hitCount: 0 });
     }
 
-    const partyRules: RankRule[] = rules
-      .filter((r) => r.ruleType !== "HSN_EQUALS")
-      .map((r) => ({
+    // The `scope` filter is the real guard; this restates it in the type
+    // system, because a `where` clause cannot narrow `ruleType`.
+    const partyRules: RankRule[] = [];
+    for (const r of rules) {
+      if (!r.ledger) continue;
+      if (
+        r.ruleType !== "GSTIN_EQUALS" &&
+        r.ruleType !== "VENDOR_NAME_CONTAINS" &&
+        r.ruleType !== "VENDOR_NAME_EQUALS"
+      ) {
+        continue;
+      }
+      partyRules.push({
         ruleType: r.ruleType,
         pattern: r.pattern,
         ledgerId: r.ledger.id,
         ledgerName: r.ledger.name,
         priority: r.priority,
-      }));
+      });
+    }
 
     const party = rankParty(keyGstin || null, keyName || null, {
       rules: partyRules,

@@ -11,7 +11,9 @@ export async function GET() {
     const { user, client } = ctx;
 
     const rules = await prisma.mappingRule.findMany({
-      where: { userId: user.id, clientId: client.id },
+      // Invoice rules only. Bank rules share the table under scope BANK and are
+      // served by /api/bank/rules, which resolves their ledger by name.
+      where: { userId: user.id, clientId: client.id, scope: "INVOICE" },
       orderBy: { priority: "asc" },
       include: { ledger: { select: { id: true, name: true } } },
     });
@@ -95,6 +97,7 @@ export async function POST(req: Request) {
       data: {
         userId: user.id,
         clientId: client.id,
+        scope: "INVOICE",
         ruleType,
         pattern,
         ledgerId,

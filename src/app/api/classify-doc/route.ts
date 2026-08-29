@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { detectDocumentType } from "@/lib/docs/detectType";
-
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8001";
+import { backendFetch } from "@/lib/backend";
 
 /** Map OCR backend doc_type → client DetectedDocType */
 function mapBackendType(docType: string): string {
@@ -27,7 +26,7 @@ export async function POST(req: Request) {
     try {
       const backendForm = new FormData();
       backendForm.append("file", file);
-      const response = await fetch(`${BACKEND_URL}/classify`, {
+      const response = await backendFetch("/classify", {
         method: "POST",
         body: backendForm,
       });

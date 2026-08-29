@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { LedgerSelect, type LedgerOption, type LedgerSelectHandle } from "@/components/LedgerSelect";
-import { TallySyncOverlay, type SyncPhase } from "@/components/TallySyncOverlay";
+import { TallySyncOverlay } from "@/components/TallySyncOverlay";
+import { TallySyncBadge } from "@/components/TallySyncBadge";
+import { useTallyPush, useVoucherSyncs } from "@/components/tallyClient";
 import { useToast } from "@/components/Toast";
 import { ArrowLeft, Save, AlertTriangle, Send, CheckCircle2, Download } from "lucide-react";
 
@@ -97,11 +99,20 @@ export default function VoucherReview({
     const extractedItems = Array.isArray(initial.invoice?.extractedData?.items) ? initial.invoice.extractedData.items : [];
     return extractedItems.map((item: Record<string, any>) => getItemLabel(item));
   });
-  const [phase, setPhase] = useState<SyncPhase>(
-    initial.status === "EXPORTED_DEMO" || initial.status === "APPROVED" ? "synced" : "idle"
-  );
   const [status, setStatus] = useState(initial.status);
   const firstUnmappedRef = useRef<LedgerSelectHandle | null>(null);
+
+  // Where Tally stands on this voucher. The server page does not carry it, and
+  // it changes while the screen is open, so it is read here.
+  const voucherIds = useMemo(() => [initial.id], [initial.id]);
+  const { syncs, refresh: refreshSyncs } = useVoucherSyncs(voucherIds);
+  const sync = syncs[initial.id];
+  const push = useTallyPush({
+    onSettled: () => {
+      void refreshSyncs();
+      router.refresh();
+    },
+  });
 
   const inv = initial.invoice || {};
   const invoiceId = initial.invoice?.id ?? null;
@@ -118,7 +129,10 @@ export default function VoucherReview({
   const totalDebit = useMemo(() => lines.reduce((s, l) => s + l.debit, 0), [lines]);
   const totalCredit = useMemo(() => lines.reduce((s, l) => s + l.credit, 0), [lines]);
   const balanced = Math.abs(totalDebit - totalCredit) < 0.01;
-  const locked = status === "EXPORTED_DEMO" || phase === "synced";
+  const posted = sync?.state === "POSTED" || status === "POSTED";
+  // Editing stops once Tally has the voucher; an XML download still locks too,
+  // since the file the user imported by hand was built from these lines.
+  const locked = posted || status === "EXPORTED_DEMO";
 
   function setLineLedger(lineId: string, ledgerId: string) {
     setLines((prev) =>
@@ -223,46 +237,56 @@ export default function VoucherReview({
     saveLedgerMapping();
   }
 
-  async function approveAndExport() {
+  async function approve(): Promise<boolean> {
+    const res = await fetch(`/api/vouchers/${initial.id}/approve`, { method: "POST" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Approve failed");
+      toast(data.error || "Approve failed", "error");
+      return false;
+    }
+    setStatus("APPROVED");
+    return true;
+  }
+
+  /** Approve, then hand the voucher to the connector. The overlay follows the
+   *  real sync row from here on — there is no timer anywhere in this path. */
+  async function approveAndPush() {
     if (stage === "items" || hasUnmapped || !balanced) return;
     setError(null);
     persistLinesInBackground();
+    if (!(await approve())) return;
+    await push.start([initial.id]);
+  }
 
-    // Approve first
-    const approveRes = await fetch(`/api/vouchers/${initial.id}/approve`, { method: "POST" });
-    if (!approveRes.ok) {
-      const data = await approveRes.json().catch(() => ({}));
-      setError(data.error || "Approve failed");
-      toast(data.error || "Approve failed", "error");
-      return;
-    }
-    setStatus("APPROVED");
-    toast("Approved — exporting Tally XML…", "success");
-
-    // Demo animation + real XML export
-    setPhase("sending");
-    window.setTimeout(async () => {
-      try {
-        const res = await fetch("/api/export/tally", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ voucherIds: [initial.id] }),
-        });
-        if (res.ok) {
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `tally_${initial.id.slice(0, 8)}.xml`;
-          a.click();
-          URL.revokeObjectURL(url);
-          setStatus("EXPORTED_DEMO");
-        }
-      } catch {
-        /* still show synced demo */
+  /** Kept for workspaces with no connector paired: the same XML, by hand. */
+  async function downloadXml() {
+    if (hasUnmapped || !balanced) return;
+    setError(null);
+    persistLinesInBackground();
+    try {
+      const res = await fetch("/api/export/tally", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voucherIds: [initial.id] }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Export failed (${res.status})`);
       }
-      setPhase("synced");
-    }, 1800);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tally_${initial.id.slice(0, 8)}.xml`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast("XML downloaded — import it in Tally to post it.", "info");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Tally export failed";
+      setError(message);
+      toast(message, "error");
+    }
   }
 
   // Keyboard shortcuts: A approve, J/K nav, E edit first unmapped, S save
@@ -273,7 +297,7 @@ export default function VoucherReview({
       const key = e.key.toLowerCase();
       if (key === "a" && !locked && stage === "ledger") {
         e.preventDefault();
-        approveAndExport();
+        void approveAndPush();
       } else if (key === "s") {
         e.preventDefault();
         void saveCurrentStep();
@@ -301,11 +325,15 @@ export default function VoucherReview({
         </Button>
         <div className="flex items-center gap-3">
           <span className="hidden md:inline text-xs text-gray-400">Shortcuts: A approve · E edit · J/K next/prev · S save</span>
-          {locked && (
-            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-700">
-              <CheckCircle2 className="h-4 w-4" /> {status === "EXPORTED_DEMO" ? "Exported XML" : "Synced"}
+          <TallySyncBadge sync={sync} />
+          {locked && !sync && (
+            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-semibold bg-sky-100 text-sky-700">
+              <CheckCircle2 className="h-4 w-4" /> Exported XML
             </span>
           )}
+          <Button variant="outline" onClick={downloadXml} disabled={hasUnmapped || !balanced}>
+            <Download className="mr-2 h-4 w-4" /> XML
+          </Button>
           <Button variant="outline" onClick={saveCurrentStep} disabled={locked || saving}>
             {savedFlash ? <CheckCircle2 className="mr-2 h-4 w-4 text-emerald-600" /> : <Save className="mr-2 h-4 w-4" />}
             {savedFlash ? "Saved" : stage === "items" ? "Save item names" : "Save mapping"}
@@ -543,8 +571,8 @@ export default function VoucherReview({
 
       {stage === "ledger" && (
         <button
-          onClick={approveAndExport}
-          disabled={hasUnmapped || !balanced || saving || locked}
+          onClick={approveAndPush}
+          disabled={hasUnmapped || !balanced || saving || locked || push.state.phase !== "idle"}
           className={`fixed bottom-6 left-6 md:left-[19.5rem] z-40 inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold shadow-lg transition
             ${
               locked
@@ -554,18 +582,16 @@ export default function VoucherReview({
                   : "bg-[#0b6b3a] text-white hover:bg-[#0a5c32] hover:shadow-xl"
             }`}
         >
-          {locked ? <Download className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-          {locked ? "Exported to Tally XML" : "Approve & Export Tally XML"}
+          {locked ? <CheckCircle2 className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+          {posted ? "In Tally's books" : locked ? "Exported to Tally XML" : "Approve & Push to Tally"}
         </button>
       )}
 
-      {phase !== "idle" && (
-        <TallySyncOverlay
-          phase={phase}
-          onDone={() => router.push("/transactions")}
-          label="voucher XML"
-        />
-      )}
+      <TallySyncOverlay
+        push={push}
+        labels={{ [initial.id]: `${inv.vendor ?? "Voucher"} · ${inv.invoiceNumber ?? initial.id.slice(0, 8)}` }}
+        onClose={() => void refreshSyncs()}
+      />
     </div>
   );
 }

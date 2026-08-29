@@ -7,6 +7,8 @@ import {
   Send,
   Users,
   Scale,
+  XCircle,
+  Clock,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,8 @@ export default async function Dashboard() {
     draftCount,
     approvedCount,
     exportedCount,
+    syncFailedCount,
+    syncStuckCount,
     pendingReviewCount,
     unmappedParties,
     gstInput,
@@ -165,8 +169,40 @@ export default async function Dashboard() {
         />
         <StatCard
           icon={<Download style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
-          label="Exported"
+          label="In Tally"
           value={exportedCount.toString()}
+        />
+        {/* The number this product exists to keep at zero. Previously it was
+            reachable only by opening Transactions and ticking a filter you
+            would think to tick only if you already suspected a problem. */}
+        <StatCard
+          icon={<XCircle style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
+          label="Rejected by Tally"
+          value={syncFailedCount.toString()}
+          href="/transactions?sync=failed"
+          alert={syncFailedCount > 0}
+          valueColor={syncFailedCount > 0 ? "#ef4444" : undefined}
+        />
+      </div>
+
+      {/* Two columns, not four: the container paints the 1px gap colour, so a
+          half-filled four-column row renders the empty cells as a grey slab. */}
+      <div
+        className="grid grid-cols-2"
+        style={{ gap: "1px", background: "var(--spx-border)", marginBottom: "24px" }}
+      >
+        {/* Stuck is not the same as failed and is worth its own number: it
+            means a connector took the job and never reported back, so the
+            voucher may already be in the client's books. It is also the state
+            that strands a voucher for good if the row is deleted while it
+            sits there. */}
+        <StatCard
+          icon={<Clock style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
+          label="Stuck Sending"
+          value={syncStuckCount.toString()}
+          href="/transactions?sync=stuck"
+          alert={syncStuckCount > 0}
+          valueColor={syncStuckCount > 0 ? "#f59e0b" : undefined}
         />
         <StatCard
           icon={<ClipboardList style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}

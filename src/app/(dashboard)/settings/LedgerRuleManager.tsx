@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import StockItemsTab from "./StockItemsTab";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +15,7 @@ import {
   Plus,
   Trash2,
   Loader2,
+  PlugZap,
 } from "lucide-react";
 
 interface Ledger extends LedgerOption {
@@ -79,7 +82,7 @@ export default function LedgerRuleManager({
   clientName?: string;
   mappingAccuracy?: number | null;
 }) {
-  const [tab, setTab] = useState<"ledgers" | "rules">(
+  const [tab, setTab] = useState<"ledgers" | "rules" | "items">(
     "ledgers"
   );
 
@@ -106,7 +109,18 @@ export default function LedgerRuleManager({
           </p>
         </div>
 
-        {mappingAccuracy != null && (
+        <div className="flex items-center gap-3">
+          {/* These are the invoice-side rules. The banking rule list is a
+              different mechanism and lives in the Tally/banking screens; the
+              link keeps the two a click apart rather than merged. */}
+          <Link
+            href="/settings/tally"
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--spx-border)] bg-[var(--spx-input-bg)] px-3 py-2 text-sm font-medium text-[var(--spx-muted)] transition hover:bg-[var(--spx-card-hover)] hover:text-[var(--spx-text)]"
+          >
+            <PlugZap className="h-4 w-4 text-emerald-400" /> Tally Connection
+          </Link>
+
+          {mappingAccuracy != null && (
           <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3">
             <div className="text-xs text-emerald-400 uppercase font-semibold">
               Mapping accuracy
@@ -120,7 +134,8 @@ export default function LedgerRuleManager({
               auto-mapped lines this client
             </div>
           </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -148,6 +163,21 @@ export default function LedgerRuleManager({
           Mapping Rules ({rules.length})
         </button>
 
+        {/* Stock items live here rather than on their own screen: they are
+            masters, they are pushed by the same MASTER_CREATE job as ledgers,
+            and a firm that never opens this tab is a firm whose clients do not
+            keep stock — which is most of them. */}
+        <button
+          onClick={() => setTab("items")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
+            tab === "items"
+              ? "bg-white text-black border-white"
+              : "bg-[var(--spx-input-bg)] border-[var(--spx-border)] text-[var(--spx-muted)] hover:bg-[var(--spx-card-hover)] hover:text-[var(--spx-text)]"
+          }`}
+        >
+          Stock Items
+        </button>
+
       </div>
 
       {tab === "ledgers" ? (
@@ -155,6 +185,8 @@ export default function LedgerRuleManager({
           ledgers={ledgers}
           setLedgers={setLedgers}
         />
+      ) : tab === "items" ? (
+        <StockItemsTab />
       ) : (
         <RulesTab
           ledgers={ledgers}

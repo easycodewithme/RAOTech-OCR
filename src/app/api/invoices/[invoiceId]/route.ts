@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
+import { getActiveClient } from "@/lib/clientContext";
 import { cleanDate } from "@/lib/accounting/normalize";
 
 const cleanMoney = (val: any): number => {
@@ -11,19 +11,29 @@ const cleanMoney = (val: any): number => {
   return 0;
 };
 
+/**
+ * Scope every lookup to the caller's workspace. findUnique by id alone would let
+ * any signed-in user read, edit or delete another tenant's invoice by guessing a
+ * UUID; the composite filter is what makes the 404 below an ownership check.
+ */
+async function loadOwnedInvoice(userId: string, clientId: string, invoiceId: string) {
+  return prisma.invoice.findFirst({
+    where: { id: invoiceId, userId, clientId },
+  });
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ invoiceId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const { invoiceId } = await params;
 
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
-    });
+    const invoice = await loadOwnedInvoice(user.id, client.id, invoiceId);
 
     if (!invoice) {
       return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
@@ -42,17 +52,16 @@ export async function PATCH(
   { params }: { params: Promise<{ invoiceId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const { invoiceId } = await params;
 
     const body = await req.json();
     const { extractedData } = body;
 
-    const existingInvoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
-    });
+    const existingInvoice = await loadOwnedInvoice(user.id, client.id, invoiceId);
 
     if (!existingInvoice) {
       return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
@@ -97,14 +106,13 @@ export async function DELETE(
   { params }: { params: Promise<{ invoiceId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const ctx = await getActiveClient();
+    if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user, client } = ctx;
 
     const { invoiceId } = await params;
 
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
-    });
+    const invoice = await loadOwnedInvoice(user.id, client.id, invoiceId);
 
     if (!invoice) {
       return NextResponse.json({ error: "Invoice not found" }, { status: 404 });

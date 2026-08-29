@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { getActiveClient } from "@/lib/clientContext";
 import { prisma } from "@/lib/prisma";
-
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8001";
+import { backendFetch } from "@/lib/backend";
 
 export async function POST(req: Request) {
   try {
@@ -32,7 +31,7 @@ export async function POST(req: Request) {
       contextPrefix = `[Active client: ${client.name}. Invoices: ${invCount}. Draft vouchers: ${draftCount}. ITC (tax sum): ₹${itc._sum.taxAmount || 0}. Latest 2B ITC at risk: ₹${latestRecon?.itcAtRisk ?? 0}.]\n\n`;
     }
 
-    const response = await fetch(`${BACKEND_URL}/chat`, {
+    const response = await backendFetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

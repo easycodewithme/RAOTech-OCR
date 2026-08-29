@@ -1,34 +1,44 @@
 import type {
-  LineRole,
   NormalizedInvoice,
   ResolvedLedgers,
   VoucherDraft,
-  VoucherLineDraft,
+  VoucherLineInput,
   VoucherType,
 } from "./types";
-
-const toPaise = (n: number): number => Math.round((n || 0) * 100);
-const toRupees = (p: number): number => Math.round(p) / 100;
+import { buildVoucherFromLines } from "./buildVoucherLines";
+import { matchStockItem, type StockItemIndex } from "./resolveStockItems";
 
 interface BuildOptions {
   /** Rounding tolerance in rupees before a warning is raised (default ₹1). */
   roundingTolerance?: number;
   narration?: string | null;
+  /**
+   * The client's stock item masters, keyed by folded item name.
+   *
+   * Omit it and nothing changes: item lines post as plain ledger entries the
+   * way they always have. Supply it and any item line whose name matches a
+   * master gains an inventory allocation, so the client's stock in Tally moves
+   * with the money. See `resolveStockItems.ts` for why this is a lookup rather
+   * than a per-client toggle.
+   */
+  stockItems?: StockItemIndex;
 }
 
 /**
- * Pure transform: OCR-derived NormalizedInvoice + resolved ledgers -> a balanced
- * double-entry VoucherDraft.
+ * Invoice -> voucher.
  *
- * Convention (Indian accounting):
+ * This is now an adapter. It turns the invoice shape (subtotal, tax totals,
+ * items, a single party) into the flat `(ledger, amount, Dr/Cr)` lines that
+ * `buildVoucherFromLines` assembles, and does no arithmetic of its own beyond
+ * choosing sides. Balancing, rounding, ordering and the unmapped check all live
+ * in one place, so a journal, a bank transaction and a scanned bill cannot
+ * drift apart on any of them.
+ *
+ * Convention (Indian accounting), unchanged:
  *  - PURCHASE: party (creditor) is CREDITED with the invoice total; item/expense
- *    and tax (Input) ledgers are DEBITED.
- *  - SALE: party (debtor) is DEBITED with the invoice total; sales and tax
- *    (Output) ledgers are CREDITED.
- *
- * A Round Off line always closes any residual so totalDebit === totalCredit.
- * The draft is never returned unbalanced. `hasUnmapped` (party null or any item
- * null) is what gates approval — it is independent of balance.
+ *    and Input tax ledgers are DEBITED.
+ *  - SALE: party (debtor) is DEBITED with the invoice total; sales and Output
+ *    tax ledgers are CREDITED.
  */
 export function buildVoucher(
   inv: NormalizedInvoice,
@@ -36,145 +46,145 @@ export function buildVoucher(
   voucherType: VoucherType,
   opts: BuildOptions = {}
 ): VoucherDraft {
-  const tolerancePaise = toPaise(opts.roundingTolerance ?? 1.0);
   // PURCHASE / vendor CREDIT_NOTE (purchase return inverted at classify) —
   // party credited for purchase; party debited for sale / debit note.
   const isPurchase =
     voucherType === "PURCHASE" ||
     voucherType === "CREDIT_NOTE" ||
     voucherType === "PAYMENT";
-  const nonPartyDebit = isPurchase;
+  const nonParty: "DR" | "CR" = isPurchase ? "DR" : "CR";
+  const party: "DR" | "CR" = isPurchase ? "CR" : "DR";
 
-  const lines: VoucherLineDraft[] = [];
+  const lines: VoucherLineInput[] = [];
   const warnings: string[] = [];
-  let sort = 0;
 
-  const push = (
-    role: LineRole,
-    ledgerId: string | null,
-    ledgerName: string | null,
-    amountPaise: number,
-    debitSide: boolean,
-    extra: Partial<VoucherLineDraft> = {}
-  ) => {
-    if (amountPaise <= 0) return;
-    const amt = toRupees(amountPaise);
-    lines.push({
-      ledgerId: ledgerId || null,
-      ledgerNameSnapshot: ledgerName ?? null,
-      role,
-      debit: debitSide ? amt : 0,
-      credit: debitSide ? 0 : amt,
-      confidence: extra.confidence ?? null,
-      mappedVia: extra.mappedVia ?? null,
-      hsnCode: extra.hsnCode ?? null,
-      gstRate: extra.gstRate ?? null,
-      sortOrder: sort++,
-    });
-  };
-
-  let hasUnmapped = false;
-
-  // 1) Item / expense lines (net of tax)
+  // 1) Item / expense lines, net of tax.
   if (inv.items.length > 0) {
     for (const { item, ledger } of resolved.itemLedgers) {
-      if (!ledger) hasUnmapped = true;
-      push(
-        "ITEM",
-        ledger?.id ?? null,
-        ledger?.name ?? null,
-        toPaise(item.price),
-        nonPartyDebit,
-        {
-          confidence: ledger?.confidence ?? null,
-          mappedVia: ledger?.via ?? null,
-          hsnCode: item.hsnCode,
-          gstRate: item.gstRate,
-        }
-      );
+      // Only if the workspace actually holds a master for this item. No master
+      // means no inventory entry, which is the pre-inventory behaviour exactly.
+      const stock = opts.stockItems ? matchStockItem(opts.stockItems, item.name) : null;
+
+      lines.push({
+        role: "ITEM",
+        ledgerId: ledger?.id ?? null,
+        ledgerName: ledger?.name ?? null,
+        amount: item.price,
+        side: nonParty,
+        confidence: ledger?.confidence ?? null,
+        mappedVia: ledger?.via ?? null,
+        hsnCode: item.hsnCode,
+        gstRate: item.gstRate,
+        ...(stock
+          ? {
+              stockItemId: stock.id,
+              // The master's spelling, not the sheet's: Tally resolves the item
+              // by name and its own is the one that will match.
+              stockItemName: stock.name,
+              quantity: item.qty || null,
+              unit: stock.unit,
+              rate: item.rate || null,
+            }
+          : {}),
+      });
     }
   } else {
-    // No line items extracted — synthesize a single net line = subtotal - discount
-    const net = toPaise(inv.subtotal) - toPaise(inv.discount);
+    // No line items extracted — one net line of subtotal less discount.
     const def = resolved.itemLedgers[0]?.ledger ?? null;
-    if (!def) hasUnmapped = true;
-    push("ITEM", def?.id ?? null, def?.name ?? null, net, nonPartyDebit, {
+    lines.push({
+      role: "ITEM",
+      ledgerId: def?.id ?? null,
+      ledgerName: def?.name ?? null,
+      amount: inv.subtotal - inv.discount,
+      side: nonParty,
       confidence: def?.confidence ?? null,
       mappedVia: def?.via ?? "DEFAULT",
     });
   }
 
-  // 2) Discount — sits opposite to items (purchase: a credit that reduces what we owe)
+  // 2) Discount sits opposite the items — on a purchase it reduces what we owe.
   if (inv.discount > 0 && resolved.discountLedgerId) {
-    push(
-      "DISCOUNT",
-      resolved.discountLedgerId,
-      resolved.discountLedgerName ?? null,
-      toPaise(inv.discount),
-      !nonPartyDebit,
-      { mappedVia: "DEFAULT" }
-    );
+    lines.push({
+      role: "DISCOUNT",
+      ledgerId: resolved.discountLedgerId,
+      ledgerName: resolved.discountLedgerName ?? null,
+      amount: inv.discount,
+      side: party,
+      mappedVia: "DEFAULT",
+    });
   }
 
-  // 3) Tax lines — interstate (IGST) vs intrastate (CGST+SGST); never both
+  // 3) Tax. Interstate (IGST) and intrastate (CGST+SGST) are exclusive.
   if (inv.igst > 0) {
-    push("IGST", resolved.igstLedgerId, resolved.igstLedgerName ?? null, toPaise(inv.igst), nonPartyDebit, { mappedVia: "DEFAULT" });
+    lines.push({
+      role: "IGST",
+      ledgerId: resolved.igstLedgerId,
+      ledgerName: resolved.igstLedgerName ?? null,
+      amount: inv.igst,
+      side: nonParty,
+      mappedVia: "DEFAULT",
+    });
     if (inv.cgst > 0 || inv.sgst > 0) {
-      warnings.push("Both IGST and CGST/SGST present — using IGST (interstate). Verify the invoice.");
+      warnings.push(
+        "Both IGST and CGST/SGST present — using IGST (interstate). Verify the invoice."
+      );
     }
   } else {
     if (inv.cgst > 0)
-      push("CGST", resolved.cgstLedgerId, resolved.cgstLedgerName ?? null, toPaise(inv.cgst), nonPartyDebit, { mappedVia: "DEFAULT" });
+      lines.push({
+        role: "CGST",
+        ledgerId: resolved.cgstLedgerId,
+        ledgerName: resolved.cgstLedgerName ?? null,
+        amount: inv.cgst,
+        side: nonParty,
+        mappedVia: "DEFAULT",
+      });
     if (inv.sgst > 0)
-      push("SGST", resolved.sgstLedgerId, resolved.sgstLedgerName ?? null, toPaise(inv.sgst), nonPartyDebit, { mappedVia: "DEFAULT" });
+      lines.push({
+        role: "SGST",
+        ledgerId: resolved.sgstLedgerId,
+        ledgerName: resolved.sgstLedgerName ?? null,
+        amount: inv.sgst,
+        side: nonParty,
+        mappedVia: "DEFAULT",
+      });
   }
 
-  // 4) Party line = authoritative invoice total
-  if (!resolved.party) hasUnmapped = true;
-  push(
-    "PARTY",
-    resolved.party?.id ?? null,
-    resolved.party?.name ?? null,
-    toPaise(inv.total),
-    !nonPartyDebit,
-    { confidence: resolved.party?.confidence ?? null, mappedVia: resolved.party?.via ?? null }
+  // Compensation cess, when the source found one. Previously there was nowhere
+  // to put this and the amount vanished into the round-off residual.
+  if ((inv.cess ?? 0) > 0) {
+    lines.push({
+      role: "CESS",
+      ledgerId: resolved.cessLedgerId ?? null,
+      ledgerName: resolved.cessLedgerName ?? null,
+      amount: inv.cess ?? 0,
+      side: nonParty,
+      mappedVia: "DEFAULT",
+    });
+  }
+
+  // 4) Party line carries the authoritative invoice total.
+  lines.push({
+    role: "PARTY",
+    ledgerId: resolved.party?.id ?? null,
+    ledgerName: resolved.party?.name ?? null,
+    amount: inv.total,
+    side: party,
+    confidence: resolved.party?.confidence ?? null,
+    mappedVia: resolved.party?.via ?? null,
+  });
+
+  const draft = buildVoucherFromLines(
+    {
+      voucherType,
+      date: inv.date,
+      narration: opts.narration ?? null,
+      lines,
+      roundOffLedgerId: resolved.roundOffLedgerId,
+      roundOffLedgerName: resolved.roundOffLedgerName ?? null,
+    },
+    { roundingTolerance: opts.roundingTolerance }
   );
 
-  // 5) Balance with a Round Off line
-  const debitPaise = lines.reduce((s, l) => s + toPaise(l.debit), 0);
-  const creditPaise = lines.reduce((s, l) => s + toPaise(l.credit), 0);
-  const diff = debitPaise - creditPaise; // +ve => need more credit
-  let roundOff = 0;
-  if (diff !== 0) {
-    if (Math.abs(diff) > tolerancePaise) {
-      warnings.push(
-        `Rounding difference of ₹${toRupees(Math.abs(diff)).toFixed(2)} exceeds tolerance — check the extracted amounts.`
-      );
-    }
-    // diff > 0 => add a credit to balance; diff < 0 => add a debit
-    push(
-      "ROUND_OFF",
-      resolved.roundOffLedgerId,
-      resolved.roundOffLedgerName ?? null,
-      Math.abs(diff),
-      diff < 0,
-      { mappedVia: "DEFAULT" }
-    );
-    roundOff = toRupees(diff);
-  }
-
-  const totalDebit = toRupees(lines.reduce((s, l) => s + toPaise(l.debit), 0));
-  const totalCredit = toRupees(lines.reduce((s, l) => s + toPaise(l.credit), 0));
-
-  return {
-    voucherType,
-    date: inv.date,
-    narration: opts.narration ?? null,
-    lines,
-    totalDebit,
-    totalCredit,
-    roundOff,
-    hasUnmapped,
-    warnings,
-  };
+  return { ...draft, warnings: [...warnings, ...draft.warnings] };
 }
