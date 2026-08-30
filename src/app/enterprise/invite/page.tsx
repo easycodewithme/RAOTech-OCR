@@ -3,7 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { Suspense, useMemo, useState, type KeyboardEvent } from "react";
+import { Suspense, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -61,23 +61,43 @@ function splitEmails(raw: string): string[] {
    Backend hand-off placeholder
    ──────────────────────────────────────────────────────────────── */
 
-async function sendInvitationsToBackend(emails: string[]) {
+async function sendInvitationsToBackend(emails: string[], orgId: string | null) {
   try {
     const res = await fetch("/api/enterprise/invitations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ emails }),
+      body: JSON.stringify({ emails, orgId }),
     });
     const data = await res.json();
-    return { ok: data.ok !== false };
+    return { ok: data.ok !== false, data };
   } catch (error) {
     console.error("[Invite API error]:", error);
-    return { ok: false };
+    return { ok: false, data: null };
+  }
+}
+
+async function parseEmailsFromFile(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const res = await fetch("/api/enterprise/invitations/parse-file", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) {
+      return { ok: false as const, error: data.error || "Failed to parse file" };
+    }
+    return { ok: true as const, emails: data.emails as string[] };
+  } catch (error) {
+    console.error("[Invite file parse error]:", error);
+    return { ok: false as const, error: "Failed to upload file" };
   }
 }
 
 function InviteTeamPageInner() {
   const searchParams = useSearchParams();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // null = unlimited seats (matches the default enterprise experience).
   const seatLimit = useMemo(() => {
@@ -86,11 +106,15 @@ function InviteTeamPageInner() {
     return Number.isFinite(n) && n > 0 ? n : null;
   }, [searchParams]);
 
+  const orgId = searchParams.get("orgId");
+
   const [draft, setDraft] = useState("");
   const [chips, setChips] = useState<string[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [sending, setSending] = useState(false);
   const [limitError, setLimitError] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const acceptedCount = invitations.filter((i) => i.status === "Accepted").length;
   const pendingCount = invitations.filter((i) => i.status === "Pending").length;
@@ -134,8 +158,9 @@ function InviteTeamPageInner() {
   async function handleSendInvitations() {
     if (chips.length === 0) return;
     setSending(true);
+    setSendError(null);
 
-    const result = await sendInvitationsToBackend(chips);
+    const result = await sendInvitationsToBackend(chips, orgId);
 
     if (result.ok) {
       const today = new Date().toLocaleDateString("en-IN", {
@@ -144,8 +169,9 @@ function InviteTeamPageInner() {
         year: "numeric",
       });
 
+      const invitedEmails: string[] = result.data?.invitedEmails ?? chips;
       setInvitations((prev) => [
-        ...chips.map((email) => ({
+        ...invitedEmails.map((email) => ({
           email,
           status: "Pending" as InvitationStatus,
           dateInvited: today,
@@ -153,9 +179,39 @@ function InviteTeamPageInner() {
         ...prev,
       ]);
       setChips([]);
+
+      if (result.data?.emailFailures?.length) {
+        setSendError(
+          `${result.data.emailFailures.length} invitation(s) were saved but the email failed to send. You can resend them later.`
+        );
+      }
+    } else {
+      setSendError(result.data?.error || "Failed to send invitations. Please try again.");
     }
 
     setSending(false);
+  }
+
+  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+
+    setFileError(null);
+    const result = await parseEmailsFromFile(file);
+
+    if (!result.ok) {
+      setFileError(result.error);
+      return;
+    }
+
+    const deduped = Array.from(new Set([...chips, ...result.emails]));
+    if (seatLimit !== null && deduped.length > seatLimit) {
+      setChips(deduped.slice(0, seatLimit));
+      setLimitError(true);
+    } else {
+      setChips(deduped);
+    }
   }
 
   return (
@@ -353,16 +409,24 @@ function InviteTeamPageInner() {
               ))}
             </div>
 
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xlsm,text/csv"
+              className="hidden"
+              onChange={handleFileSelected}
+            />
             <button
               type="button"
-              onClick={() =>
-                console.log("[invite] TODO: open CSV / Excel import dialog")
-              }
+              onClick={() => fileInputRef.current?.click()}
               className="mt-5 flex w-full items-center justify-center gap-2 rounded-[10px] border border-dashed border-border py-3 text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
               <Upload className="h-4 w-4" />
               Add from CSV / Excel
             </button>
+            {fileError && (
+              <p className="mt-2 text-xs text-destructive">{fileError}</p>
+            )}
 
             <div className="mt-6 border-t border-border pt-5">
               <p className="text-sm font-semibold">Recent invitations</p>
@@ -483,6 +547,12 @@ function InviteTeamPageInner() {
             <ArrowRight className="h-4 w-4" />
           </Button>
         </div>
+
+        {sendError && (
+          <p className="mx-auto mt-3 max-w-5xl text-right text-xs text-destructive">
+            {sendError}
+          </p>
+        )}
 
         {/* Success info */}
         <div className="mx-auto mt-6 flex max-w-5xl items-center justify-between gap-8 overflow-hidden rounded-[14px] border border-border bg-card p-8">

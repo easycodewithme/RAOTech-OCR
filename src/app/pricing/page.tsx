@@ -92,7 +92,7 @@ const loadRazorpayScript = (): Promise<boolean> => {
 async function goToPaymentGateway(
   plan: "individual" | "enterprise",
   meta?: { billing: Billing; users?: number },
-  onSuccess?: () => void
+  onSuccess?: (verifyData: { orgId?: string; maxSeats?: number }) => void
 ) {
   try {
     const isScriptLoaded = await loadRazorpayScript();
@@ -146,7 +146,7 @@ async function goToPaymentGateway(
 
         const verifyData = await verifyRes.json();
         if (verifyData.success) {
-          if (onSuccess) onSuccess();
+          if (onSuccess) onSuccess({ orgId: verifyData.orgId, maxSeats: verifyData.maxSeats });
         } else {
           alert("Payment verification failed.");
         }
@@ -204,8 +204,10 @@ export default function PricingPage() {
       return;
     }
     setEnterpriseError(false);
-    void goToPaymentGateway("enterprise", { billing, users: parsedUsers }, () => {
-      router.push(`/enterprise/invite?seats=${parsedUsers}`);
+    void goToPaymentGateway("enterprise", { billing, users: parsedUsers }, (verifyData) => {
+      const seats = verifyData.maxSeats ?? parsedUsers;
+      const orgParam = verifyData.orgId ? `&orgId=${verifyData.orgId}` : "";
+      router.push(`/enterprise/invite?seats=${seats}${orgParam}`);
     });
   }
 
