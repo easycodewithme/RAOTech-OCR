@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
+import { useUser, useClerk } from "@clerk/nextjs";
 import Link from "next/link";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 
@@ -19,10 +19,9 @@ function AcceptInvitePageInner() {
   const router = useRouter();
   const token = searchParams.get("token");
   const { isSignedIn, isLoaded, user } = useUser();
+  const { openSignIn, openSignUp } = useClerk();
   const [state, setState] = useState<State>({ step: "loading" });
 
-  // Step 1: validate the token itself (works whether or not the visitor is
-  // signed in yet — this is the link they clicked straight from the email).
   useEffect(() => {
     if (!token) {
       setState({ step: "invalid", message: "This invitation link is missing a token." });
@@ -44,7 +43,6 @@ function AcceptInvitePageInner() {
         return;
       }
 
-      // Signed in already — try consuming immediately.
       setState({ step: "accepting" });
       const acceptRes = await fetch("/api/enterprise/invitations/accept", {
         method: "POST",
@@ -76,22 +74,28 @@ function AcceptInvitePageInner() {
             <p className="mt-2 text-sm text-muted-foreground">
               Sign up or sign in with <strong>{state.email}</strong> to join the workspace.
             </p>
-            <Link
-              href={`/sign-up?redirect_url=${encodeURIComponent(
-                `/invite/accept?token=${token}`
-              )}`}
+            <button
+              type="button"
+              onClick={() =>
+                openSignUp({
+                  redirectUrl: `/invite/accept?token=${token}`,
+                })
+              }
               className="mt-6 block w-full rounded-[10px] bg-primary py-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
             >
               Create account
-            </Link>
-            <Link
-              href={`/sign-in?redirect_url=${encodeURIComponent(
-                `/invite/accept?token=${token}`
-              )}`}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                openSignIn({
+                  redirectUrl: `/invite/accept?token=${token}`,
+                })
+              }
               className="mt-3 block text-xs text-muted-foreground hover:text-foreground"
             >
               Already have an account? Sign in
-            </Link>
+            </button>
           </>
         ) : state.step === "accepted" ? (
           <>
