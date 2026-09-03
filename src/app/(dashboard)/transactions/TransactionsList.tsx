@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -157,6 +157,11 @@ export default function TransactionsList({
   const { toast } = useToast();
   // Populated when the server refuses an export because Tally would reject it.
   const [blocked, setBlocked] = useState<ExportIssue[] | null>(null);
+  const [hasDemoAccess, setHasDemoAccess] = useState(false);
+
+  useEffect(() => {
+    void fetch("/api/demo").then((res) => res.ok ? res.json() : null).then((data) => setHasDemoAccess(Boolean(data?.booking)));
+  }, []);
 
   const voucherIds = useMemo(() => vouchers.map((v) => v.id), [vouchers]);
   const { syncs, refresh: refreshSyncs } = useVoucherSyncs(voucherIds);
@@ -402,11 +407,11 @@ export default function TransactionsList({
               Delete From Tally ({deletable.length})
             </Button>
           )}
-          {/* Export XML and Push to Tally now route to the pricing page. */}
+          {/* These actions require a confirmed demo booking. */}
           <Button
             size="sm"
             disabled={busy}
-            onClick={() => router.push("/pricing")}
+            onClick={() => hasDemoAccess ? void exportTally() : router.push("/demo")}
             className="bg-green-600 hover:bg-green-500 text-white"
           >
             <Download className="mr-2 h-4 w-4" />
@@ -415,7 +420,7 @@ export default function TransactionsList({
           <Button
             size="sm"
             className="bg-[#0b6b3a] hover:bg-[#0a5c32]"
-            onClick={() => router.push("/pricing")}
+            onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/demo")}
           >
             <Send className="mr-2 h-4 w-4" />
             Push to Tally ({selected.size})

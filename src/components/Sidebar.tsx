@@ -20,6 +20,7 @@ import {
   Building2,
   PlugZap,
   Settings,
+  DollarSign,
 } from "lucide-react";
 import { SignOutButton } from "@clerk/nextjs";
 import { extraPagesEnabled } from "@/lib/featureFlags";
@@ -38,7 +39,8 @@ const routes = [
   { label: "Tally Connection", icon: PlugZap, href: "/settings/tally" },
   { label: "Intake Links", icon: Link2, href: "/intake", localOnly: true },
   { label: "Tasks", icon: ClipboardList, href: "/tasks", localOnly: true },
-  { label: "AI Assistant", icon: MessageSquare, href: "/pricing" },
+  { label: "AI Assistant", icon: MessageSquare, href: "/chat" },
+  { label: "Pricing", icon: DollarSign, href: "/pricing" },
   { label: "Communication", icon: MessagesSquare, href: "/communication", localOnly: true },
 ];
 

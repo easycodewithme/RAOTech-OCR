@@ -2,9 +2,12 @@ import { NextResponse } from "next/server";
 import { getActiveClient } from "@/lib/clientContext";
 import { prisma } from "@/lib/prisma";
 import { backendFetch } from "@/lib/backend";
+import { requireDemoAccess } from "@/lib/demoAccess";
 
 export async function POST(req: Request) {
   try {
+    const access = await requireDemoAccess();
+    if (access.response) return access.response;
     const ctx = await getActiveClient();
     const { message, history } = await req.json();
 

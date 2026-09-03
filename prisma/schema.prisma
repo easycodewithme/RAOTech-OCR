@@ -41,6 +41,8 @@ model User {
   connectorDevices ConnectorDevice[]
   pairingCodes     PairingCode[]
   syncJobs         SyncJob[]
+  demoBooking      DemoBooking?
+  googleOAuthToken GoogleOAuthToken?
 
   ownedOrgs       Organization[]   @relation("OrgOwner")
   orgMemberships  OrgMember[]
@@ -1170,6 +1172,31 @@ model Subscription {
   @@index([orgId, status])
 }
 
+model DemoBooking {
+  id              String            @id @default(uuid())
+  userId          String            @unique
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startAt         DateTime
+  endAt           DateTime
+  meetUrl         String
+  calendarEventId String?
+  status          DemoBookingStatus @default(CONFIRMED)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([startAt, endAt])
+}
+
+model GoogleOAuthToken {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String
+  scope        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 // ── TEAM INVITATIONS ──
 
 model TeamInvitation {
@@ -1234,5 +1261,10 @@ enum InviteStatus {
   ACCEPTED
   EXPIRED
   REVOKED
+}
+
+enum DemoBookingStatus {
+  CONFIRMED
+  CANCELLED
 }
 

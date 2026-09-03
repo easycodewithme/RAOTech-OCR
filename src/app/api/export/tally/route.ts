@@ -4,6 +4,7 @@ import { getActiveClient } from "@/lib/clientContext";
 import { buildTallyXml } from "@/lib/tally/exportXml";
 import { preflightVouchers, hasBlockingIssues } from "@/lib/tally/preflight";
 import { withRouteLogging } from "@/lib/trace";
+import { requireDemoAccess } from "@/lib/demoAccess";
 
 /**
  * POST /api/export/tally
@@ -12,6 +13,8 @@ import { withRouteLogging } from "@/lib/trace";
  */
 async function postTallyExport(req: Request) {
   try {
+    const access = await requireDemoAccess();
+    if (access.response) return access.response;
     const ctx = await getActiveClient();
     if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { user, client } = ctx;
