@@ -1,28 +1,49 @@
+import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { getDbUser } from "@/lib/getDbUser";
 import { prisma } from "@/lib/prisma";
-import { createDemoMeeting } from "@/lib/demoBooking";
 
 export async function POST(req: Request) {
   try {
-    const user = await getDbUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const body = await req.json();
-    const startAt = new Date(body.startAt);
-    const endAt = new Date(startAt.getTime() + 60 * 60 * 1000);
-    const now = new Date();
-    const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    if (!Number.isFinite(startAt.getTime()) || startAt <= now || startAt > weekFromNow || startAt.getMinutes() !== 0) {
-      return NextResponse.json({ error: "Choose an available one-hour slot within the next week" }, { status: 400 });
+    const signature = req.headers.get("calendly-webhook-signature");
+    const secret = process.env.CALENDLY_WEBHOOK_SIGNING_KEY;
+    const rawBody = await req.text();
+    if (!signature || !secret) return NextResponse.json({ error: "Webhook not configured" }, { status: 500 });
+
+    const parts = Object.fromEntries(signature.split(",").map((part) => part.trim().split("=", 2)));
+    const timestamp = parts.t;
+    const expected = crypto.createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex");
+    const received = parts.v1 ? Buffer.from(parts.v1, "hex") : Buffer.alloc(0);
+    const expectedBytes = Buffer.from(expected, "hex");
+    if (!timestamp || !parts.v1 || received.length !== expectedBytes.length || !crypto.timingSafeEqual(expectedBytes, received)) {
+      return NextResponse.json({ error: "Invalid webhook signature" }, { status: 401 });
     }
-    const existing = await prisma.demoBooking.findFirst({ where: { status: "CONFIRMED", startAt: { lt: endAt }, endAt: { gt: startAt } } });
-    if (existing) return NextResponse.json({ error: "That slot is no longer available" }, { status: 409 });
-    const meeting = await createDemoMeeting({ userId: user.id, startAt, endAt, name: user.name || "RAO AI user", email: user.email });
-    const booking = await prisma.demoBooking.upsert({ where: { userId: user.id }, update: { startAt, endAt, ...meeting, status: "CONFIRMED" }, create: { userId: user.id, startAt, endAt, ...meeting } });
-    return NextResponse.json({ booking });
+
+    const body = JSON.parse(rawBody) as {
+      event?: string;
+      payload?: {
+        event?: { start_time?: string; end_time?: string; uri?: string; location?: { join_url?: string } };
+        invitee?: { email?: string; name?: string; uri?: string; canceled?: boolean };
+      };
+    };
+    const invitee = body.payload?.invitee;
+    const event = body.payload?.event;
+    if (!invitee?.email || !event?.start_time || !event.end_time) return NextResponse.json({ error: "Invalid Calendly payload" }, { status: 400 });
+
+    const user = await prisma.user.findUnique({ where: { email: invitee.email.toLowerCase() } });
+    if (!user) return NextResponse.json({ received: true, matched: false });
+    const startAt = new Date(event.start_time);
+    const endAt = new Date(event.end_time);
+    const canceled = body.event === "invitee.canceled" || invitee.canceled === true;
+    await prisma.demoBooking.upsert({
+      where: { userId: user.id },
+      update: { startAt, endAt, meetUrl: event.location?.join_url || "", calendarEventId: event.uri, status: canceled ? "CANCELLED" : "CONFIRMED" },
+      create: { userId: user.id, startAt, endAt, meetUrl: event.location?.join_url || "", calendarEventId: event.uri, status: canceled ? "CANCELLED" : "CONFIRMED" },
+    });
+    return NextResponse.json({ received: true, matched: true });
   } catch (error) {
-    console.error("[DEMO_BOOKING_ERROR]", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not book demo" }, { status: 500 });
+    console.error("[CALENDLY_WEBHOOK_ERROR]", error);
+    return NextResponse.json({ error: "Could not process Calendly webhook" }, { status: 500 });
   }
 }
 

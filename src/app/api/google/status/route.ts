@@ -1,10 +1,9 @@
-import { NextResponse } from "next/server";
-import { getDbUser } from "@/lib/getDbUser";
-import { prisma } from "@/lib/prisma";
+/*
+ * LEGACY GOOGLE OAUTH STATUS ROUTE
+ * Calendly is now the active booking provider. Preserved but disabled.
+ *
+ * The former implementation reported whether a GoogleOAuthToken existed for
+ * the current user.
+ */
 
-export async function GET() {
-  const user = await getDbUser();
-  if (!user) return NextResponse.json({ connected: false }, { status: 401 });
-  const token = await prisma.googleOAuthToken.findUnique({ where: { userId: user.id }, select: { id: true } });
-  return NextResponse.json({ connected: Boolean(token) });
-}
+export {};
