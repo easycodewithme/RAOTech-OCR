@@ -20,6 +20,7 @@ import {
   Building2,
   PlugZap,
   Settings,
+  UserPlus,
 } from "lucide-react";
 import { SignOutButton } from "@clerk/nextjs";
 import { extraPagesEnabled } from "@/lib/featureFlags";
@@ -39,6 +40,7 @@ const routes = [
   { label: "Intake Links", icon: Link2, href: "/intake", localOnly: true },
   { label: "Tasks", icon: ClipboardList, href: "/tasks", localOnly: true },
   { label: "AI Assistant", icon: MessageSquare, href: "/chat" },
+  { label: "Invite Users", icon: UserPlus, href: "/invite-users" },
   { label: "Communication", icon: MessagesSquare, href: "/communication", localOnly: true },
 ];
 
