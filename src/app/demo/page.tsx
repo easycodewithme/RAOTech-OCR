@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { SignedIn, SignedOut, SignInButton, useUser } from "@clerk/nextjs";
 import { CalendarDays, CheckCircle2, Clock, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export default function DemoPage() {
+function DemoPageContent() {
   const [booked, setBooked] = useState<{ meetUrl: string } | null>(null);
   const { user } = useUser();
   const searchParams = useSearchParams();
@@ -72,5 +73,13 @@ export default function DemoPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function DemoPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-background" />}>
+      <DemoPageContent />
+    </Suspense>
   );
 }
