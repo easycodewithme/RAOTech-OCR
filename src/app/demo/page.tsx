@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { SignedIn, SignedOut, SignInButton, useUser } from "@clerk/nextjs";
 import { CalendarDays, CheckCircle2, Clock, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,8 @@ import { Button } from "@/components/ui/button";
 export default function DemoPage() {
   const [booked, setBooked] = useState<{ meetUrl: string } | null>(null);
   const { user } = useUser();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo") || "/dashboard";
   const calendlyUrl = process.env.NEXT_PUBLIC_CALENDLY_BOOKING_URL;
 
   useEffect(() => {
@@ -23,6 +26,10 @@ export default function DemoPage() {
     const email = user?.primaryEmailAddress?.emailAddress;
     if (email) url.searchParams.set("email", email);
     return url.toString();
+  }
+
+  function openCalendly() {
+    window.sessionStorage.setItem("rao-demo-return-to", returnTo);
   }
 
   return (
@@ -42,7 +49,7 @@ export default function DemoPage() {
             <div className="flex items-center gap-3"><CalendarDays className="h-5 w-5" /><h2 className="font-semibold">Choose a time this week</h2></div>
             <p className="mt-5 text-sm text-muted-foreground">Calendly will show the available one-hour slots and handle the calendar invitation and Google Meet link.</p>
             <SignedIn>
-              <Button asChild disabled={Boolean(booked) || !calendlyUrl} className="mt-6 w-full rounded-[10px] py-6"><a href={calendlyLink()}>Book Demo on Calendly</a></Button>
+              <Button asChild disabled={Boolean(booked) || !calendlyUrl} className="mt-6 w-full rounded-[10px] py-6"><a href={calendlyLink()} onClick={openCalendly}>Book Demo on Calendly</a></Button>
             </SignedIn>
             <SignedOut>
               <SignInButton mode="modal" forceRedirectUrl="/demo"><Button variant="outline" className="mt-6 w-full rounded-[10px] py-6">Sign in to book</Button></SignInButton>

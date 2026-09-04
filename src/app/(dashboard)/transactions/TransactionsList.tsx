@@ -411,7 +411,7 @@ export default function TransactionsList({
           <Button
             size="sm"
             disabled={busy}
-            onClick={() => hasDemoAccess ? void exportTally() : router.push("/demo")}
+            onClick={() => hasDemoAccess ? void exportTally() : router.push("/demo?returnTo=/transactions")}
             className="bg-green-600 hover:bg-green-500 text-white"
           >
             <Download className="mr-2 h-4 w-4" />
@@ -420,7 +420,7 @@ export default function TransactionsList({
           <Button
             size="sm"
             className="bg-[#0b6b3a] hover:bg-[#0a5c32]"
-            onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/demo")}
+            onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/demo?returnTo=/transactions")}
           >
             <Send className="mr-2 h-4 w-4" />
             Push to Tally ({selected.size})

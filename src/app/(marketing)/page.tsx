@@ -285,6 +285,12 @@ export default function LandingPage() {
             >
               Results
             </a>
+            <Link
+              href="/pricing"
+              className="transition-colors hover:text-foreground"
+            >
+              Pricing
+            </Link>
           </nav>
 
           <div className="ml-auto flex items-center gap-3">
