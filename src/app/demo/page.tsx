@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { SignedIn, SignedOut, SignInButton, useUser } from "@clerk/nextjs";
 import { CalendarDays, CheckCircle2, Clock, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function DemoPageContent() {
   const [booked, setBooked] = useState<{ meetUrl: string } | null>(null);
+  const [calendlyOpen, setCalendlyOpen] = useState(false);
   const { user } = useUser();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo") || "/dashboard";
   const calendlyUrl = process.env.NEXT_PUBLIC_CALENDLY_BOOKING_URL;
@@ -20,6 +22,20 @@ function DemoPageContent() {
       if (data?.booking) setBooked(data.booking);
     });
   }, []);
+
+  useEffect(() => {
+    function handleCalendlyMessage(event: MessageEvent) {
+      if (event.origin !== "https://calendly.com") return;
+      const data = typeof event.data === "string" ? (() => {
+        try { return JSON.parse(event.data); } catch { return null; }
+      })() : event.data;
+      if (data?.event === "calendly.event_scheduled") {
+        router.push("/demo/success");
+      }
+    }
+    window.addEventListener("message", handleCalendlyMessage);
+    return () => window.removeEventListener("message", handleCalendlyMessage);
+  }, [router]);
 
   function calendlyLink() {
     if (!calendlyUrl) return "#";
@@ -31,6 +47,7 @@ function DemoPageContent() {
 
   function openCalendly() {
     window.sessionStorage.setItem("rao-demo-return-to", returnTo);
+    setCalendlyOpen(true);
   }
 
   return (
@@ -50,7 +67,8 @@ function DemoPageContent() {
             <div className="flex items-center gap-3"><CalendarDays className="h-5 w-5" /><h2 className="font-semibold">Choose a time this week</h2></div>
             <p className="mt-5 text-sm text-muted-foreground">Calendly will show the available one-hour slots and handle the calendar invitation and Google Meet link.</p>
             <SignedIn>
-              <Button asChild disabled={Boolean(booked) || !calendlyUrl} className="mt-6 w-full rounded-[10px] py-6"><a href={calendlyLink()} onClick={openCalendly}>Book Demo on Calendly</a></Button>
+              <Button disabled={Boolean(booked) || !calendlyUrl} onClick={openCalendly} className="mt-6 w-full rounded-[10px] py-6">Book Demo on Calendly</Button>
+              {calendlyOpen && calendlyUrl && <iframe title="Book an RAO AI demo" src={calendlyLink()} className="mt-6 h-[720px] w-full rounded-[10px] border border-border" />}
             </SignedIn>
             <SignedOut>
               <SignInButton mode="modal" forceRedirectUrl="/demo"><Button variant="outline" className="mt-6 w-full rounded-[10px] py-6">Sign in to book</Button></SignInButton>

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 
 export async function hasDemoAccess(userId: string) {
   const booking = await prisma.demoBooking.findFirst({
-    where: { userId, status: "CONFIRMED", endAt: { gt: new Date() } },
+    where: { userId },
     select: { id: true },
   });
   return Boolean(booking);

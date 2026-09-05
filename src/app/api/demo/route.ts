@@ -50,6 +50,6 @@ export async function POST(req: Request) {
 export async function GET() {
   const user = await getDbUser();
   if (!user) return NextResponse.json({ booking: null }, { status: 401 });
-  const booking = await prisma.demoBooking.findFirst({ where: { userId: user.id, status: "CONFIRMED", endAt: { gt: new Date() } } });
+  const booking = await prisma.demoBooking.findFirst({ where: { userId: user.id } });
   return NextResponse.json({ booking });
 }

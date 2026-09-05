@@ -158,9 +158,13 @@ export default function TransactionsList({
   // Populated when the server refuses an export because Tally would reject it.
   const [blocked, setBlocked] = useState<ExportIssue[] | null>(null);
   const [hasDemoAccess, setHasDemoAccess] = useState(false);
+  const [demoAccessChecked, setDemoAccessChecked] = useState(false);
 
   useEffect(() => {
-    void fetch("/api/demo").then((res) => res.ok ? res.json() : null).then((data) => setHasDemoAccess(Boolean(data?.booking)));
+    void fetch("/api/demo")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => setHasDemoAccess(Boolean(data?.booking)))
+      .finally(() => setDemoAccessChecked(true));
   }, []);
 
   const voucherIds = useMemo(() => vouchers.map((v) => v.id), [vouchers]);
@@ -410,20 +414,21 @@ export default function TransactionsList({
           {/* These actions require a confirmed demo booking. */}
           <Button
             size="sm"
-            disabled={busy}
+            disabled={busy || !demoAccessChecked}
             onClick={() => hasDemoAccess ? void exportTally() : router.push("/demo?returnTo=/transactions")}
             className="bg-green-600 hover:bg-green-500 text-white"
           >
             <Download className="mr-2 h-4 w-4" />
-            Export XML
+            {demoAccessChecked && !hasDemoAccess ? "Book a demo to export" : "Export XML"}
           </Button>
           <Button
             size="sm"
+            disabled={!demoAccessChecked}
             className="bg-[#0b6b3a] hover:bg-[#0a5c32]"
             onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/demo?returnTo=/transactions")}
           >
             <Send className="mr-2 h-4 w-4" />
-            Push to Tally ({selected.size})
+            {demoAccessChecked && !hasDemoAccess ? "Book a demo to push" : `Push to Tally (${selected.size})`}
           </Button>
         </div>
       </div>
