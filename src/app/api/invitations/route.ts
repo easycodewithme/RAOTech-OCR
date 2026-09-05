@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     if (!EMAIL_PATTERN.test(email)) return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
     if (email === user.email.toLowerCase()) return NextResponse.json({ error: "You cannot invite your own email address" }, { status: 400 });
 
-    await sendInvitationEmail({ senderId: user.id, senderName: user.name || "A RAO AI user", recipient: email });
+    await sendInvitationEmail({ senderName: user.name || "A RAO AI user", recipient: email });
     return NextResponse.json({ ok: true, email });
   } catch (error) {
     console.error("[INVITATIONS_ERROR]", error);
