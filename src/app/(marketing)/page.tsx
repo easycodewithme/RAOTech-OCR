@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { SignedIn, SignedOut, SignInButton, SignUpButton } from "@clerk/nextjs";
+import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
 
 import { Button } from "@/components/ui/button";
 
@@ -38,8 +38,13 @@ function useReveal<T extends HTMLElement>() {
     ).matches;
 
     if (reducedMotion) {
-      setVisible(true);
-      return;
+      const frame = window.requestAnimationFrame(() => {
+        setVisible(true);
+      });
+
+      return () => {
+        window.cancelAnimationFrame(frame);
+      };
     }
 
     const observer = new IntersectionObserver(
@@ -297,16 +302,15 @@ export default function LandingPage() {
             <SignedOut>
               <SignInButton mode="modal" forceRedirectUrl="/dashboard">
                 <Button className="rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80 px-6 font-medium shadow-sm transition-all">
-                  Login / Register
+                  Login / Sign up
                 </Button>
               </SignInButton>
             </SignedOut>
 
             <SignedIn>
               <Link href="/dashboard">
-                <Button className="rounded-full bg-primary font-medium text-primary-foreground hover:bg-primary/90 px-6 shadow-sm">
-                  Get started
-                  <ArrowRight className="ml-2 h-4 w-4" />
+                <Button className="rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80 px-6 font-medium shadow-sm transition-all">
+                  Login / Sign up
                 </Button>
               </Link>
             </SignedIn>
@@ -318,7 +322,7 @@ export default function LandingPage() {
         {/* ── Hero & Framed Video ── */}
         <section className="w-full border-b border-border bg-background py-10 md:py-16">
           <div className="mx-auto max-w-6xl px-4 md:px-6">
-            <div className="grid gap-8 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">
+            <div className="grid gap-8 lg:grid-cols-[1.25fr_0.75fr] lg:items-center">
               <div>
                 <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
                   Built for enterprise finance &amp; accounting teams
@@ -331,33 +335,12 @@ export default function LandingPage() {
                 </h1>
               </div>
 
-              <div className="lg:pb-1">
+              <div>
                 <p className="max-w-xl text-sm leading-7 text-muted-foreground md:text-base">
                   RAO AI reads your invoices, reconciles tax data, and keeps
                   your accounting system in sync — eliminating manual data entry.
                 </p>
 
-                <div className="mt-7 flex flex-wrap gap-3.5">
-                  <Link href="/dashboard">
-                    <Button
-                      size="lg"
-                      className="rounded-full bg-primary px-7 py-6 font-semibold text-primary-foreground hover:bg-primary/90 shadow-md transition-all"
-                    >
-                      Get started
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </Button>
-                  </Link>
-
-                  <a href="#platform">
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      className="rounded-full border-border px-7 py-6 font-semibold bg-background/50 hover:bg-accent transition-all"
-                    >
-                      Explore platform
-                    </Button>
-                  </a>
-                </div>
               </div>
             </div>
 
@@ -619,31 +602,6 @@ export default function LandingPage() {
             <p className="mt-4 text-muted-foreground md:text-lg">
               Join leading finance teams and CAs saving over 80% of manual entry time.
             </p>
-            <div className="mt-8 flex justify-center gap-4">
-              <SignedOut>
-                <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
-                  <Button
-                    size="lg"
-                    className="rounded-lg bg-primary px-8 py-6 font-semibold text-primary-foreground hover:bg-primary/90 shadow-lg transition-all"
-                  >
-                    Get Started Free
-                    <ArrowRight className="ml-2 h-5 w-5" />
-                  </Button>
-                </SignUpButton>
-              </SignedOut>
-
-              <SignedIn>
-                <Link href="/dashboard">
-                  <Button
-                    size="lg"
-                    className="rounded-lg bg-primary px-8 py-6 font-semibold text-primary-foreground hover:bg-primary/90 shadow-lg transition-all"
-                  >
-                    Get Started
-                    <ArrowRight className="ml-2 h-5 w-5" />
-                  </Button>
-                </Link>
-              </SignedIn>
-            </div>
           </div>
         </section>
       </main>
@@ -729,13 +687,6 @@ export default function LandingPage() {
                 </Link>
               </li>
 
-              <li>
-                <SignInButton mode="modal" forceRedirectUrl="/dashboard">
-                  <button className="text-muted-foreground hover:text-foreground">
-                    Sign in
-                  </button>
-                </SignInButton>
-              </li>
             </ul>
           </div>
         </div>
