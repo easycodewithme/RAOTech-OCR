@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import {
@@ -88,6 +89,22 @@ export default clerkMiddleware(async (auth, req) => {
     const protectStartedAt = Date.now();
 
     await auth.protect();
+
+    const { sessionId, userId } = await auth();
+
+    if (sessionId && userId) {
+      const client = await clerkClient();
+      const sessions = await client.sessions.getSessionList({
+        userId,
+        status: "active",
+      });
+
+      await Promise.all(
+        sessions.data
+          .filter((session) => session.id !== sessionId)
+          .map((session) => client.sessions.revokeSession(session.id))
+      );
+    }
 
     trace("proxy", "request:auth-protected", {
       pathname,
