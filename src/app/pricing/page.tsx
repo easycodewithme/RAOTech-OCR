@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   ArrowRight,
   Building2,
+  CalendarDays,
   Check,
   ChevronDown,
   Cloud,
@@ -68,6 +69,30 @@ const YEARLY_DISCOUNT = 0.2;
 
 type Billing = "monthly" | "yearly";
 
+type RazorpayResponse = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  prefill: { name: string; email: string };
+  theme: { color: string };
+  handler: (response: RazorpayResponse) => Promise<void>;
+};
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: RazorpayOptions) => { open: () => void };
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────
    Backend hand-off placeholders
    These functions are the ONLY thing that should be replaced once
@@ -77,7 +102,7 @@ type Billing = "monthly" | "yearly";
 
 const loadRazorpayScript = (): Promise<boolean> => {
   return new Promise((resolve) => {
-    if (typeof window !== "undefined" && (window as any).Razorpay) {
+    if (typeof window !== "undefined" && window.Razorpay) {
       resolve(true);
       return;
     }
@@ -133,7 +158,7 @@ async function goToPaymentGateway(
       theme: {
         color: "#0f172a",
       },
-      handler: async function (response: any) {
+      handler: async function (response: RazorpayResponse) {
         const verifyRes = await fetch("/api/billing/checkout", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -153,11 +178,19 @@ async function goToPaymentGateway(
       },
     };
 
-    const paymentObject = new (window as any).Razorpay(options);
+    if (!window.Razorpay) {
+      alert("Razorpay SDK is unavailable.");
+      return;
+    }
+
+    const paymentObject = new window.Razorpay(options);
     paymentObject.open();
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("[Razorpay Gateway Error]:", err);
-    alert("Checkout error: " + (err?.message || "Failed to initiate payment"));
+    alert(
+      "Checkout error: " +
+        (err instanceof Error ? err.message : "Failed to initiate payment")
+    );
   }
 }
 
@@ -309,6 +342,18 @@ export default function PricingPage() {
                 Save 20%
               </span>
             </button>
+          </div>
+
+          <div className="mt-6">
+            <Link href="/demo">
+              <Button
+                variant="outline"
+                className="rounded-[8px] border-border px-5"
+              >
+                <CalendarDays className="h-4 w-4" />
+                Book a demo
+              </Button>
+            </Link>
           </div>
         </section>
 
