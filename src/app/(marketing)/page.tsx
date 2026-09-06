@@ -298,6 +298,13 @@ export default function LandingPage() {
             </Link>
           </nav>
 
+          <Link
+            href="/pricing"
+            className="ml-auto text-sm font-medium text-foreground md:hidden"
+          >
+            Pricing
+          </Link>
+
           <div className="ml-auto flex items-center gap-3">
             <SignedOut>
               <SignInButton mode="modal" forceRedirectUrl="/dashboard">

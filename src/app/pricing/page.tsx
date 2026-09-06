@@ -273,13 +273,6 @@ export default function PricingPage() {
             </button>
           </nav>
 
-          <Link
-            href="/pricing"
-            className="ml-auto text-sm font-medium text-foreground md:hidden"
-          >
-            Pricing
-          </Link>
-
           <div className="ml-auto flex items-center gap-3">
             <SignInButton mode="modal" forceRedirectUrl="/dashboard">
               <Button variant="outline" className="rounded-[8px] border-border">
