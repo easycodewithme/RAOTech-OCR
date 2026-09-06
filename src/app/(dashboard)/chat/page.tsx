@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { Send, User, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +20,6 @@ function formatTime(d: Date) {
 }
 
 export default function ChatPage() {
-  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([
     { role: "assistant", content: "Hello! I am RAO AI. Ask about this client's ITC, drafts, vendors, or reconciliation." }
   ]);
@@ -64,11 +62,6 @@ export default function ChatPage() {
       });
 
       const data = await res.json();
-
-      if (res.status === 403 && data.code === "DEMO_REQUIRED") {
-        router.push("/demo?returnTo=/chat");
-        return;
-      }
 
       // 3. Add AI Response to UI
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
