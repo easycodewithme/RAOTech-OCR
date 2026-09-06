@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 import { getRazorpayInstance } from "@/lib/razorpay";
 import crypto from "crypto";
 
-const INDIVIDUAL_MONTHLY_PRICE = 1499;
-const ENTERPRISE_UNIT_MONTHLY_PRICE = 499;
+const PLAN_PRICES: Record<string, number> = {
+  professional: 7999,
+  business: 14999,
+  enterprise: 25000,
+  individual: 7999,
+};
 const YEARLY_DISCOUNT = 0.2;
 
 // ── 1. Create Razorpay Order ──
@@ -12,10 +16,10 @@ export async function POST(req: Request) {
     const { plan, billing, users } = await req.json();
 
     const isYearly = billing === "yearly";
-    const seatCount = plan === "individual" ? 1 : Math.max(users || 1, 1);
+    const seatCount = Math.max(users || 1, 1);
 
     const monthlyUnitPrice =
-      plan === "individual" ? INDIVIDUAL_MONTHLY_PRICE : ENTERPRISE_UNIT_MONTHLY_PRICE;
+      PLAN_PRICES[plan?.toLowerCase()] || (plan === "individual" ? 7999 : 14999);
 
     const unitPrice = isYearly
       ? Math.round(monthlyUnitPrice * (1 - YEARLY_DISCOUNT))

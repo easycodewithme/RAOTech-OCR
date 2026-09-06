@@ -3,71 +3,14 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { SignInButton, SignUpButton } from "@clerk/nextjs";
+import { SignInButton, SignUpButton, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import {
-  ArrowRight,
-  Building2,
-  CalendarDays,
-  Check,
-  ChevronDown,
-  Cloud,
-  Headphones,
-  Lock,
-  ShieldCheck,
-  User,
-  Users,
-} from "lucide-react";
 
 /* ────────────────────────────────────────────────────────────────
-   Static content
+   Types & Razorpay Gateway
    ──────────────────────────────────────────────────────────────── */
-
-const INDIVIDUAL_FEATURES = [
-  "1 User",
-  "AI Invoice Scanning",
-  "Automatic Data Extraction",
-  "Invoice Management",
-  "GST Data Extraction",
-  "Dashboard & Reports",
-  "Basic Integrations",
-  "Secure Cloud Storage",
-  "Email Support",
-];
-
-const ENTERPRISE_FEATURES_LEFT = [
-  "Multiple Employees",
-  "Centralized Workspace",
-  "Employee Invitations",
-  "Role-Based Access",
-  "Team Management",
-  "Advanced Integrations",
-];
-
-const ENTERPRISE_FEATURES_RIGHT = [
-  "Company-Level Reports",
-  "Centralized Processing",
-  "Admin Controls",
-  "Audit Logs",
-  "Priority Support",
-  "Dedicated Onboarding",
-];
-
-const TRUST_STRIP = [
-  { icon: ShieldCheck, label: "Bank-grade Security" },
-  { icon: Cloud, label: "99.9% Uptime" },
-  { icon: Lock, label: "Secure Cloud" },
-  { icon: Check, label: "GDPR Compliant" },
-];
-
-const INDIVIDUAL_MONTHLY_PRICE = 2999;
-const ENTERPRISE_UNIT_MONTHLY_PRICE = 7999;
-const YEARLY_DISCOUNT = 0.2;
-
-type Billing = "monthly" | "yearly";
 
 type RazorpayResponse = {
   razorpay_order_id: string;
@@ -93,13 +36,6 @@ declare global {
   }
 }
 
-/* ────────────────────────────────────────────────────────────────
-   Backend hand-off placeholders
-   These functions are the ONLY thing that should be replaced once
-   the real payment gateway is wired up on the backend. Nothing else
-   on this page needs to change.
-   ──────────────────────────────────────────────────────────────── */
-
 const loadRazorpayScript = (): Promise<boolean> => {
   return new Promise((resolve) => {
     if (typeof window !== "undefined" && window.Razorpay) {
@@ -115,8 +51,7 @@ const loadRazorpayScript = (): Promise<boolean> => {
 };
 
 async function goToPaymentGateway(
-  plan: "individual" | "enterprise",
-  meta?: { billing: Billing; users?: number },
+  plan: "professional" | "business" | "enterprise",
   onSuccess?: () => void
 ) {
   try {
@@ -129,7 +64,7 @@ async function goToPaymentGateway(
     const res = await fetch("/api/billing/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan, billing: meta?.billing, users: meta?.users }),
+      body: JSON.stringify({ plan, billing: "monthly", users: 1 }),
     });
 
     const data = await res.json();
@@ -140,23 +75,29 @@ async function goToPaymentGateway(
 
     const key = data.keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
     if (!key) {
-      alert("Razorpay Key ID is missing. Please check your Vercel Environment Variables.");
+      alert("Razorpay Key ID is missing. Please check your environment variables.");
       return;
     }
 
-    const options = {
+    const planTitles: Record<string, string> = {
+      professional: "Professional Plan",
+      business: "Business Plan",
+      enterprise: "Enterprise Plan",
+    };
+
+    const options: RazorpayOptions = {
       key,
       amount: data.amount,
       currency: data.currency,
-      name: "RAO AI",
-      description: `${plan === "individual" ? "Individual Plan" : "Enterprise Plan"} (${meta?.billing || "monthly"})`,
+      name: "RaoAI",
+      description: `${planTitles[plan] || "Subscription"} (Monthly)`,
       order_id: data.orderId,
       prefill: {
         name: "Customer",
         email: "customer@example.com",
       },
       theme: {
-        color: "#0f172a",
+        color: "#0B1536",
       },
       handler: async function (response: RazorpayResponse) {
         const verifyRes = await fetch("/api/billing/checkout", {
@@ -194,376 +135,394 @@ async function goToPaymentGateway(
   }
 }
 
-function formatINR(value: number) {
-  return `₹${value.toLocaleString("en-IN")}`;
+/* ────────────────────────────────────────────────────────────────
+   Custom Bullet Icon matching PDF (target ring with center dot)
+   ──────────────────────────────────────────────────────────────── */
+function BulletIcon() {
+  return (
+    <svg
+      className="mt-0.5 h-4 w-4 shrink-0 text-[#2563eb]"
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="8" cy="8" r="2" fill="currentColor" />
+    </svg>
+  );
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Page
+   Page Component
    ──────────────────────────────────────────────────────────────── */
-
 export default function PricingPage() {
   const router = useRouter();
-  const [billing, setBilling] = useState<Billing>("monthly");
-  const [numUsers, setNumUsers] = useState("");
-  const [enterpriseError, setEnterpriseError] = useState(false);
+  const { isSignedIn } = useUser();
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
 
-  const individualPrice =
-    billing === "yearly"
-      ? Math.round(INDIVIDUAL_MONTHLY_PRICE * (1 - YEARLY_DISCOUNT))
-      : INDIVIDUAL_MONTHLY_PRICE;
-
-  const enterpriseUnitPrice =
-    billing === "yearly"
-      ? Math.round(ENTERPRISE_UNIT_MONTHLY_PRICE * (1 - YEARLY_DISCOUNT))
-      : ENTERPRISE_UNIT_MONTHLY_PRICE;
-
-  const parsedUsers = useMemo(() => {
-    const n = parseInt(numUsers, 10);
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  }, [numUsers]);
-
-  const estimatedTotal = parsedUsers * enterpriseUnitPrice;
-
-  function handleChooseIndividual() {
-    void goToPaymentGateway("individual", { billing }, () => {
-      router.push("/dashboard");
-    });
-  }
-
-  function handleContinueEnterprise() {
-    if (parsedUsers <= 0) {
-      setEnterpriseError(true);
+  async function handleSelectPlan(plan: "professional" | "business" | "enterprise") {
+    if (plan === "enterprise") {
+      router.push("/demo");
       return;
     }
-    setEnterpriseError(false);
-    void goToPaymentGateway("enterprise", { billing, users: parsedUsers }, () => {
-      router.push(`/enterprise/invite?seats=${parsedUsers}`);
-    });
+
+    setLoadingPlan(plan);
+    try {
+      await goToPaymentGateway(plan, () => {
+        router.push("/dashboard");
+      });
+    } finally {
+      setLoadingPlan(null);
+    }
+  }
+
+  function handleStartFree() {
+    if (isSignedIn) {
+      router.push("/dashboard");
+    }
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-[1440px] items-center px-6 lg:px-10">
-          <Link href="/" className="text-lg font-bold tracking-tight">
-            RAO AI
+    <div className="min-h-screen bg-[#FDFEFE] text-slate-900 flex flex-col justify-between font-sans">
+      {/* ── Top Header Bar (matches dark blue RaoAI bar in PDF) ── */}
+      <header className="sticky top-0 z-50 bg-[#0B1536] text-white shadow-md">
+        <div className="mx-auto flex h-20 max-w-6xl items-center justify-between px-6 lg:px-8">
+          {/* Brand Logo & Subtitle */}
+          <Link href="/" className="flex items-center gap-3.5 group">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2563eb] text-xl font-extrabold text-white shadow-sm transition-transform group-hover:scale-105">
+              R
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xl font-bold tracking-tight text-white leading-tight">
+                RaoAI
+              </span>
+              <span className="text-xs text-blue-200/70 font-normal leading-tight">
+                Invoice automation platform
+              </span>
+            </div>
           </Link>
 
-          <nav className="ml-12 hidden items-center gap-8 text-sm text-muted-foreground md:flex">
-            <Link href="/#platform" className="transition-colors hover:text-foreground">
+          {/* Navigation Links */}
+          <nav className="hidden md:flex items-center gap-8 text-sm text-slate-300">
+            <Link href="/#platform" className="hover:text-white transition-colors">
               Product
             </Link>
-            <Link href="/#platform" className="transition-colors hover:text-foreground">
+            <Link href="/#platform" className="hover:text-white transition-colors">
               Features
             </Link>
             <Link
               href="/pricing"
-              className="relative pb-[22px] pt-[22px] text-foreground after:absolute after:bottom-0 after:left-0 after:h-[2px] after:w-full after:bg-foreground"
+              className="text-white font-medium relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[2px] after:w-full after:bg-[#2563eb]"
             >
               Pricing
             </Link>
-            <button
-              type="button"
-              className="flex items-center gap-1 transition-colors hover:text-foreground"
-            >
-              Resources
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
+            <Link href="/demo" className="hover:text-white transition-colors flex items-center gap-1">
+              Demo
+            </Link>
           </nav>
 
-          <div className="ml-auto flex items-center gap-3">
-            <SignInButton mode="modal" forceRedirectUrl="/dashboard">
-              <Button variant="outline" className="rounded-[8px] border-border">
-                Sign In
+          {/* Right Header Area */}
+          <div className="flex items-center gap-4">
+            <span className="hidden sm:inline-block text-[11px] font-semibold uppercase tracking-[0.3em] text-blue-200/80 mr-2">
+              P R I C I N G
+            </span>
+            {isSignedIn ? (
+              <Button
+                onClick={() => router.push("/dashboard")}
+                className="rounded-xl bg-[#2563eb] hover:bg-blue-600 text-white text-xs font-semibold px-4 py-2"
+              >
+                Dashboard
               </Button>
-            </SignInButton>
-            <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
-              <Button className="rounded-[8px] bg-primary text-primary-foreground hover:bg-primary/90">
-                Sign Up
-              </Button>
-            </SignUpButton>
+            ) : (
+              <div className="flex items-center gap-2.5">
+                <SignInButton mode="modal" forceRedirectUrl="/dashboard">
+                  <Button
+                    variant="ghost"
+                    className="text-slate-300 hover:text-white hover:bg-slate-800/60 rounded-xl text-xs font-medium px-3.5"
+                  >
+                    Sign In
+                  </Button>
+                </SignInButton>
+                <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
+                  <Button className="rounded-xl bg-[#2563eb] hover:bg-blue-600 text-white text-xs font-semibold px-4 py-2 shadow-sm">
+                    Sign Up
+                  </Button>
+                </SignUpButton>
+              </div>
+            )}
           </div>
         </div>
       </header>
 
-      <main>
-        {/* Hero */}
-        <section className="mx-auto max-w-[1440px] px-6 pt-16 pb-10 text-center lg:px-10">
-          <span className="inline-flex items-center rounded-full border border-border px-3 py-1 text-[11px] font-medium uppercase tracking-[0.15em] text-muted-foreground">
-            Pricing
-          </span>
-
-          <h1 className="mx-auto mt-6 max-w-2xl text-4xl font-bold tracking-tight md:text-5xl">
-            Choose the right plan
-            <br />
-            for you or your company.
-          </h1>
-
-          <p className="mx-auto mt-4 max-w-lg text-base text-muted-foreground">
-            Powerful invoice automation for individuals and enterprises of any
-            size.
-          </p>
-
-          {/* Billing switch */}
-          <div className="mx-auto mt-8 inline-flex items-center gap-1 rounded-[10px] border border-border bg-card p-1">
-            <button
-              type="button"
-              onClick={() => setBilling("monthly")}
-              className={cn(
-                "rounded-[8px] px-5 py-2 text-sm font-medium transition-colors",
-                billing === "monthly"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Monthly
-            </button>
-            <button
-              type="button"
-              onClick={() => setBilling("yearly")}
-              className={cn(
-                "flex items-center gap-2 rounded-[8px] px-5 py-2 text-sm font-medium transition-colors",
-                billing === "yearly"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Yearly
-              <span
-                className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                  billing === "yearly"
-                    ? "bg-background/15 text-background"
-                    : "bg-accent text-foreground"
-                )}
-              >
-                Save 20%
-              </span>
-            </button>
+      {/* ── Main Content Area ── */}
+      <main className="flex-1">
+        <div className="mx-auto max-w-6xl px-6 py-12 lg:py-16">
+          {/* Header Title Section */}
+          <div className="max-w-2xl">
+            <h1 className="text-3xl sm:text-4xl lg:text-[40px] font-extrabold tracking-tight text-slate-900 leading-tight">
+              Plans &amp; Pricing
+            </h1>
+            <p className="mt-3 text-base sm:text-lg text-slate-500 font-normal">
+              Simple, scalable invoice automation for CA firms and businesses.
+            </p>
           </div>
 
-          <div className="mt-6">
-            <Link href="/demo">
-              <Button
-                variant="outline"
-                className="rounded-[8px] border-border px-5"
-              >
-                <CalendarDays className="h-4 w-4" />
-                Book a demo
-              </Button>
-            </Link>
-          </div>
-        </section>
-
-        {/* Pricing cards */}
-        <section className="mx-auto max-w-[1440px] px-6 pb-16 lg:px-10">
-          <div className="grid gap-6 lg:grid-cols-2">
-            {/* Individual */}
-            <div className="flex flex-col rounded-[14px] border border-border bg-card p-8">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-background">
-                <User className="h-5 w-5 text-foreground" />
+          {/* ── 3-Column Pricing Grid ── */}
+          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 items-stretch">
+            {/* ── CARD 1: Professional (Most Popular) ── */}
+            <div className="relative flex flex-col rounded-[26px] border-2 border-[#2563eb] bg-white p-7 lg:p-8 shadow-sm transition-all hover:shadow-md">
+              {/* Most Popular Badge */}
+              <div className="absolute -top-3.5 left-8 rounded-full bg-[#2563eb] px-4 py-1 text-[11px] font-bold uppercase tracking-wider text-white shadow-sm">
+                MOST POPULAR
               </div>
 
-              <p className="mt-5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Individual Account
-              </p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                For professionals managing invoices on their own.
-              </p>
-
-              <div className="my-6 border-t border-border" />
-
-              <div className="flex items-baseline gap-2">
-                <span className="text-4xl font-bold tracking-tight">
-                  {formatINR(individualPrice)}
-                </span>
-                <span className="text-sm text-muted-foreground">
-                  / {billing === "yearly" ? "month, billed yearly" : "month"}
-                </span>
+              {/* Title & Price */}
+              <div className="pt-2">
+                <h3 className="text-2xl font-bold tracking-tight text-[#1e40af]">
+                  Professional
+                </h3>
+                <div className="mt-3 flex items-baseline gap-1">
+                  <span className="text-4xl font-extrabold tracking-tight text-slate-900">
+                    ₹7,999
+                  </span>
+                  <span className="text-slate-500 text-sm font-normal">/month</span>
+                </div>
               </div>
 
-              <ul className="mt-6 space-y-3">
-                {INDIVIDUAL_FEATURES.map((feature) => (
-                  <li key={feature} className="flex items-center gap-2.5 text-sm">
-                    <Check className="h-4 w-4 shrink-0 text-foreground" />
-                    <span className="text-foreground/90">{feature}</span>
-                  </li>
-                ))}
+              {/* Divider */}
+              <div className="my-6 border-t border-slate-100" />
+
+              {/* Best For Section */}
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                  BEST FOR
+                </p>
+                <p className="mt-1.5 text-sm font-semibold text-slate-900 leading-snug">
+                  CA firms and growing professional teams
+                </p>
+              </div>
+
+              {/* Bullet Features */}
+              <ul className="mt-6 space-y-4 flex-1">
+                <li className="flex items-start gap-3">
+                  <BulletIcon />
+                  <span className="text-sm text-slate-600 leading-snug">
+                    Built for regular invoice-processing workflows
+                  </span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <BulletIcon />
+                  <span className="text-sm text-slate-600 leading-snug">
+                    The step from manual work to automation
+                  </span>
+                </li>
               </ul>
 
-              <div className="mt-8 flex flex-1 flex-col justify-end">
+              {/* Card Action */}
+              <div className="mt-8 pt-2">
                 <Button
-                  onClick={handleChooseIndividual}
-                  className="w-full rounded-[10px] bg-primary py-6 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+                  onClick={() => handleSelectPlan("professional")}
+                  disabled={loadingPlan === "professional"}
+                  className="w-full rounded-xl bg-[#2563eb] hover:bg-blue-700 text-white font-semibold py-5 text-sm shadow-sm transition-colors"
                 >
-                  Choose Individual
-                  <ArrowRight className="h-4 w-4" />
+                  {loadingPlan === "professional" ? "Preparing checkout..." : "Choose Professional"}
                 </Button>
-                <p className="mt-3 text-center text-xs text-muted-foreground">
-                  Perfect for freelancers and consultants.
-                </p>
               </div>
             </div>
 
-            {/* Enterprise */}
-            <div className="relative flex flex-col rounded-[14px] border border-foreground/30 bg-card p-8">
-              <span className="absolute right-8 top-8 rounded-full border border-border bg-background px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                Most Flexible
-              </span>
-
-              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-background">
-                <Building2 className="h-5 w-5 text-foreground" />
-              </div>
-
-              <p className="mt-5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Enterprise Account
-              </p>
-              <p className="mt-2 max-w-xs text-sm text-muted-foreground">
-                For companies managing invoices across teams of any size.
-              </p>
-
-              <div className="my-6 border-t border-border" />
-
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Price per user / month
-              </p>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-4xl font-bold tracking-tight">
-                  {formatINR(enterpriseUnitPrice)}
-                </span>
-                <span className="text-sm text-muted-foreground">
-                  per user / month
-                </span>
-              </div>
-
-              {/* Number of users */}
-              <div className="mt-6">
-                <label
-                  htmlFor="num-users"
-                  className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground"
-                >
-                  Number of users
-                </label>
-                <div className="relative mt-2">
-                  <input
-                    id="num-users"
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    value={numUsers}
-                    onChange={(e) => {
-                      setNumUsers(e.target.value);
-                      if (enterpriseError) setEnterpriseError(false);
-                    }}
-                    placeholder="Enter number of users"
-                    className={cn(
-                      "h-11 w-full rounded-[10px] border bg-background px-4 pr-10 text-sm text-foreground outline-none placeholder:text-muted-foreground/70",
-                      "focus-visible:ring-[3px] focus-visible:ring-ring/40",
-                      enterpriseError ? "border-destructive" : "border-border"
-                    )}
-                  />
-                  <Users className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            {/* ── CARD 2: Business ── */}
+            <div className="relative flex flex-col rounded-[26px] border border-slate-200 bg-white p-7 lg:p-8 shadow-sm transition-all hover:border-slate-300 hover:shadow-md">
+              {/* Title & Price */}
+              <div className="pt-2">
+                <h3 className="text-2xl font-bold tracking-tight text-slate-900">
+                  Business
+                </h3>
+                <div className="mt-3 flex items-baseline gap-1">
+                  <span className="text-4xl font-extrabold tracking-tight text-slate-900">
+                    ₹14,999
+                  </span>
+                  <span className="text-slate-500 text-sm font-normal">/month</span>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  No minimum. Scale to thousands.
-                </p>
               </div>
 
-              {/* Dynamic total */}
-              <div className="mt-6 rounded-[10px] border border-border bg-background p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  Estimated total / month
-                </p>
-                <p className="mt-2 text-3xl font-bold tracking-tight">
-                  {formatINR(estimatedTotal)}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {parsedUsers > 0
-                    ? `${parsedUsers} user${parsedUsers === 1 ? "" : "s"} × ${formatINR(
-                        enterpriseUnitPrice
-                      )}`
-                    : "Enter number of users to see total"}
-                </p>
-              </div>
+              {/* Divider */}
+              <div className="my-6 border-t border-slate-100" />
 
-              {/* Feature checklist */}
-              <p className="mt-8 text-sm font-semibold">
-                Everything in Individual, plus:
-              </p>
-              <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
-                {ENTERPRISE_FEATURES_LEFT.map((feature) => (
-                  <div key={feature} className="flex items-center gap-2.5 text-sm">
-                    <Check className="h-4 w-4 shrink-0 text-foreground" />
-                    <span className="text-foreground/90">{feature}</span>
-                  </div>
-                ))}
-                {ENTERPRISE_FEATURES_RIGHT.map((feature) => (
-                  <div key={feature} className="flex items-center gap-2.5 text-sm">
-                    <Check className="h-4 w-4 shrink-0 text-foreground" />
-                    <span className="text-foreground/90">{feature}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-8 flex flex-1 flex-col justify-end">
-                <Button
-                  onClick={handleContinueEnterprise}
-                  className="w-full rounded-[10px] bg-primary py-6 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
-                >
-                  Continue with Enterprise
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-                {enterpriseError ? (
-                  <p className="mt-3 text-center text-xs text-destructive">
-                    Enter the number of users to continue.
-                  </p>
-                ) : (
-                  <p className="mt-3 text-center text-xs text-muted-foreground">
-                    You can add or manage users anytime.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Contact sales */}
-          <div className="mt-6 flex flex-col items-start gap-6 rounded-[14px] border border-border bg-card p-8 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-5">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-border bg-background">
-                <Headphones className="h-5 w-5 text-foreground" />
-              </div>
+              {/* Best For Section */}
               <div>
-                <p className="text-base font-semibold">
-                  Need custom pricing for your organization?
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                  BEST FOR
                 </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Talk to our sales team for enterprise plans tailored for
-                  you.
+                <p className="mt-1.5 text-sm font-semibold text-slate-900 leading-snug">
+                  Medium businesses and larger CA firms
                 </p>
+              </div>
+
+              {/* Bullet Features */}
+              <ul className="mt-6 space-y-4 flex-1">
+                <li className="flex items-start gap-3">
+                  <BulletIcon />
+                  <span className="text-sm text-slate-600 leading-snug">
+                    For larger teams and higher volumes
+                  </span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <BulletIcon />
+                  <span className="text-sm text-slate-600 leading-snug">
+                    Higher operational requirements covered
+                  </span>
+                </li>
+              </ul>
+
+              {/* Card Action */}
+              <div className="mt-8 pt-2">
+                <Button
+                  onClick={() => handleSelectPlan("business")}
+                  disabled={loadingPlan === "business"}
+                  variant="outline"
+                  className="w-full rounded-xl border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold py-5 text-sm shadow-sm transition-colors"
+                >
+                  {loadingPlan === "business" ? "Preparing checkout..." : "Choose Business"}
+                </Button>
               </div>
             </div>
-            <Button
-              variant="outline"
-              className="w-full shrink-0 rounded-[10px] border-border sm:w-auto"
-            >
-              Contact Sales
-              <ArrowRight className="h-4 w-4" />
-            </Button>
+
+            {/* ── CARD 3: Enterprise ── */}
+            <div className="relative flex flex-col rounded-[26px] border border-slate-200 bg-white p-7 lg:p-8 shadow-sm transition-all hover:border-slate-300 hover:shadow-md">
+              {/* Title & Price */}
+              <div className="pt-2">
+                <h3 className="text-2xl font-bold tracking-tight text-slate-900">
+                  Enterprise
+                </h3>
+                <div className="mt-3 flex items-baseline gap-1">
+                  <span className="text-4xl font-extrabold tracking-tight text-slate-900">
+                    ₹25,000+
+                  </span>
+                  <span className="text-slate-500 text-sm font-normal">/month</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-400 font-medium">
+                  ₹25,000–₹50,000+ range
+                </p>
+              </div>
+
+              {/* Divider */}
+              <div className="my-6 border-t border-slate-100" />
+
+              {/* Best For Section */}
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                  BEST FOR
+                </p>
+                <p className="mt-1.5 text-sm font-semibold text-slate-900 leading-snug">
+                  Large firms and companies with advanced requirements
+                </p>
+              </div>
+
+              {/* Bullet Features */}
+              <ul className="mt-6 space-y-4 flex-1">
+                <li className="flex items-start gap-3">
+                  <BulletIcon />
+                  <span className="text-sm text-slate-600 leading-snug">
+                    Customised workflows and integrations
+                  </span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <BulletIcon />
+                  <span className="text-sm text-slate-600 leading-snug">
+                    Dedicated support and scale
+                  </span>
+                </li>
+              </ul>
+
+              {/* Card Action */}
+              <div className="mt-8 pt-2">
+                <Button
+                  onClick={() => router.push("/demo")}
+                  variant="outline"
+                  className="w-full rounded-xl border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold py-5 text-sm shadow-sm transition-colors"
+                >
+                  Contact Sales
+                </Button>
+              </div>
+            </div>
           </div>
 
-          {/* Trust strip */}
-          <div className="mt-12 grid grid-cols-2 gap-6 border-t border-border pt-10 sm:grid-cols-4">
-            {TRUST_STRIP.map(({ icon: Icon, label }) => (
-              <div key={label} className="flex items-center justify-center gap-2.5">
-                <Icon className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">{label}</span>
-              </div>
-            ))}
+          {/* ── Callout Banner: "Why ₹7,999/month is the main plan" ── */}
+          <div className="mt-14 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm flex items-start gap-5 sm:gap-6">
+            <div className="w-1.5 self-stretch rounded-full bg-[#2563eb] shrink-0 min-h-[80px]" />
+            <div className="space-y-2.5">
+              <h4 className="text-base sm:text-lg font-bold text-slate-900">
+                Why ₹7,999/month is the main plan
+              </h4>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                The Professional plan is designed to be the sweet spot for CA firms: powerful
+                enough for regular invoice-processing workflows, while remaining accessible
+                for firms that are moving from manual work to automation.
+              </p>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                <strong className="font-semibold text-slate-900">
+                  Scale when you need more.
+                </strong>{" "}
+                Move to Business for larger teams and higher operational requirements, or
+                Enterprise for customised workflows, integrations, support and scale.
+              </p>
+            </div>
           </div>
-        </section>
+
+          {/* ── Bottom Action CTAs & Growth Info ── */}
+          <div className="mt-12 flex flex-col md:flex-row md:items-center justify-between gap-8 pt-4">
+            {/* Action Buttons */}
+            <div className="flex flex-wrap items-center gap-4">
+              {isSignedIn ? (
+                <Button
+                  onClick={handleStartFree}
+                  className="rounded-xl bg-[#2563eb] hover:bg-blue-700 text-white font-semibold text-sm px-8 py-3.5 h-auto shadow-sm"
+                >
+                  Start free
+                </Button>
+              ) : (
+                <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
+                  <Button className="rounded-xl bg-[#2563eb] hover:bg-blue-700 text-white font-semibold text-sm px-8 py-3.5 h-auto shadow-sm">
+                    Start free
+                  </Button>
+                </SignUpButton>
+              )}
+
+              <Link href="/demo">
+                <Button
+                  variant="outline"
+                  className="rounded-xl border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-sm px-8 py-3.5 h-auto shadow-sm"
+                >
+                  Book a demo
+                </Button>
+              </Link>
+            </div>
+
+            {/* Growth Note */}
+            <div className="max-w-md text-left md:text-right space-y-1">
+              <p className="text-sm font-semibold text-slate-800">
+                All plans are designed to grow with your workflow.
+              </p>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Contact RaoAI for enterprise requirements, custom integrations, team setup or
+                volume-based pricing.
+              </p>
+            </div>
+          </div>
+        </div>
       </main>
+
+      {/* ── Dark Blue Footer Strip (matches PDF footer) ── */}
+      <footer className="bg-[#0B1536] text-slate-400 py-4 px-6 lg:px-8 border-t border-slate-800/80">
+        <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-2 text-xs font-normal">
+          <p className="text-slate-300">
+            RaoAI — invoice automation for CA firms and businesses
+          </p>
+          <p className="text-slate-400">
+            Prices in INR, per month. Enterprise pricing on request.
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }
