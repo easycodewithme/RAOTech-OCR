@@ -298,12 +298,18 @@ export default function LandingPage() {
             </Link>
           </nav>
 
-          <Link
-            href="/pricing"
-            className="ml-auto text-sm font-medium text-foreground md:hidden"
-          >
-            Pricing
-          </Link>
+          <div className="ml-auto flex items-center gap-2 md:hidden">
+            <Link href="#platform">
+              <Button className="rounded-full bg-secondary px-4 font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80">
+                Platform
+              </Button>
+            </Link>
+            <Link href="/pricing">
+              <Button className="rounded-full bg-secondary px-4 font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80">
+                Pricing
+              </Button>
+            </Link>
+          </div>
 
           <div className="ml-auto flex items-center gap-3">
             <SignedOut>
