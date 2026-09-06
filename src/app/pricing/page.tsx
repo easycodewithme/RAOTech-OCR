@@ -63,8 +63,8 @@ const TRUST_STRIP = [
   { icon: Check, label: "GDPR Compliant" },
 ];
 
-const INDIVIDUAL_MONTHLY_PRICE = 1499;
-const ENTERPRISE_UNIT_MONTHLY_PRICE = 499;
+const INDIVIDUAL_MONTHLY_PRICE = 2999;
+const ENTERPRISE_UNIT_MONTHLY_PRICE = 7999;
 const YEARLY_DISCOUNT = 0.2;
 
 type Billing = "monthly" | "yearly";

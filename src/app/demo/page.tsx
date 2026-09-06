@@ -4,24 +4,15 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { SignedIn, SignedOut, SignInButton, useUser } from "@clerk/nextjs";
 import { CalendarDays, CheckCircle2, Clock, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 function DemoPageContent() {
-  const [booked, setBooked] = useState<{ meetUrl: string } | null>(null);
   const [calendlyOpen, setCalendlyOpen] = useState(false);
-  const { user } = useUser();
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo") || "/dashboard";
   const calendlyUrl = process.env.NEXT_PUBLIC_CALENDLY_BOOKING_URL;
-
-  useEffect(() => {
-    void fetch("/api/demo").then((response) => response.ok ? response.json() : null).then((data) => {
-      if (data?.booking) setBooked(data.booking);
-    });
-  }, []);
 
   useEffect(() => {
     function handleCalendlyMessage(event: MessageEvent) {
@@ -40,8 +31,6 @@ function DemoPageContent() {
   function calendlyLink() {
     if (!calendlyUrl) return "#";
     const url = new URL(calendlyUrl);
-    const email = user?.primaryEmailAddress?.emailAddress;
-    if (email) url.searchParams.set("email", email);
     return url.toString();
   }
 
@@ -66,27 +55,14 @@ function DemoPageContent() {
           <div className="rounded-[14px] border border-border bg-card p-6">
             <div className="flex items-center gap-3"><CalendarDays className="h-5 w-5" /><h2 className="font-semibold">Choose a time this week</h2></div>
             <p className="mt-5 text-sm text-muted-foreground">Calendly will show the available one-hour slots and handle the calendar invitation and Google Meet link.</p>
-            <SignedIn>
-              <Button disabled={Boolean(booked) || !calendlyUrl} onClick={openCalendly} className="mt-6 w-full rounded-[10px] py-6">Book Demo on Calendly</Button>
-              {calendlyOpen && calendlyUrl && <iframe title="Book an RAO AI demo" src={calendlyLink()} className="mt-6 h-[720px] w-full rounded-[10px] border border-border" />}
-            </SignedIn>
-            <SignedOut>
-              <SignInButton mode="modal" forceRedirectUrl="/demo"><Button variant="outline" className="mt-6 w-full rounded-[10px] py-6">Sign in to book</Button></SignInButton>
-            </SignedOut>
-            {booked && <><p className="mt-4 text-sm text-muted-foreground">Your demo is booked. Check your email for the calendar invitation.</p><a className="mt-3 inline-block text-sm underline" href={booked.meetUrl} target="_blank" rel="noreferrer">Join your meeting</a></>}
+            <Button disabled={!calendlyUrl} onClick={openCalendly} className="mt-6 w-full rounded-[10px] py-6">Book Demo on Calendly</Button>
+            {calendlyOpen && calendlyUrl && <iframe title="Book an RAO AI demo" src={calendlyLink()} className="mt-6 h-[720px] w-full rounded-[10px] border border-border" />}
           </div>
           <aside className="space-y-4 text-sm text-muted-foreground">
             <div className="flex gap-3"><Clock className="h-5 w-5 shrink-0 text-foreground" /><span>One hour, scheduled at a time that works for you.</span></div>
             <div className="flex gap-3"><Video className="h-5 w-5 shrink-0 text-foreground" /><span>Calendly creates the meeting link and sends the invitations.</span></div>
             <div className="flex gap-3"><CheckCircle2 className="h-5 w-5 shrink-0 text-foreground" /><span>After booking, your AI and Tally features unlock.</span></div>
-            <SignedOut>
-              <SignInButton mode="modal" forceRedirectUrl="/demo">
-                <Button variant="outline" className="mt-4 w-full rounded-[10px]">Sign in to book</Button>
-              </SignInButton>
-            </SignedOut>
-            <SignedIn>
-              <p className="mt-4 text-xs text-muted-foreground">You are signed in and ready to book.</p>
-            </SignedIn>
+            <p className="mt-4 text-xs text-muted-foreground">You can book a demo without creating an account first.</p>
           </aside>
         </section>
       </div>
