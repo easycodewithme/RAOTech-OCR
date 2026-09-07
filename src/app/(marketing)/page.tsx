@@ -20,6 +20,8 @@ import {
   Zap,
   ShieldCheck,
   ChevronDown,
+  Menu,
+  X,
 } from "lucide-react";
 
 function useReveal<T extends HTMLElement>() {
@@ -200,6 +202,7 @@ export default function LandingPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -279,12 +282,6 @@ export default function LandingPage() {
 
           <nav className="ml-10 hidden items-center gap-8 font-medium text-sm text-muted-foreground md:flex">
             <a
-              href="#platform"
-              className="transition-colors hover:text-foreground"
-            >
-              Platform
-            </a>
-            <a
               href="#results"
               className="transition-colors hover:text-foreground"
             >
@@ -298,20 +295,8 @@ export default function LandingPage() {
             </Link>
           </nav>
 
-          <div className="ml-auto flex items-center gap-2 md:hidden">
-            <Link href="#platform">
-              <Button className="rounded-full bg-secondary px-4 font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80">
-                Platform
-              </Button>
-            </Link>
-            <Link href="/pricing">
-              <Button className="rounded-full bg-secondary px-4 font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80">
-                Pricing
-              </Button>
-            </Link>
-          </div>
-
-          <div className="ml-auto flex items-center gap-3">
+          {/* Desktop Auth CTA */}
+          <div className="ml-auto hidden items-center gap-3 md:flex">
             <SignedOut>
               <SignInButton mode="modal" forceRedirectUrl="/dashboard">
                 <Button className="rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80 px-6 font-medium shadow-sm transition-all">
@@ -328,8 +313,103 @@ export default function LandingPage() {
               </Link>
             </SignedIn>
           </div>
+
+          {/* Mobile Right Controls */}
+          <div className="ml-auto flex items-center gap-2 md:hidden">
+            <SignedOut>
+              <SignInButton mode="modal" forceRedirectUrl="/dashboard">
+                <Button
+                  size="sm"
+                  className="rounded-full bg-secondary px-3.5 py-1 text-xs font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80"
+                >
+                  Login
+                </Button>
+              </SignInButton>
+            </SignedOut>
+
+            <SignedIn>
+              <Link href="/dashboard">
+                <Button
+                  size="sm"
+                  className="rounded-full bg-secondary px-3.5 py-1 text-xs font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80"
+                >
+                  Dashboard
+                </Button>
+              </Link>
+            </SignedIn>
+
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((prev) => !prev)}
+              aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+              aria-expanded={mobileMenuOpen}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/70 bg-secondary/50 text-foreground transition-colors hover:bg-secondary focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {mobileMenuOpen ? (
+                <X className="h-4 w-4" />
+              ) : (
+                <Menu className="h-4 w-4" />
+              )}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile Dropdown Menu */}
+        {mobileMenuOpen && (
+          <div className="border-t border-border/80 bg-background/98 px-4 pt-3 pb-5 shadow-2xl backdrop-blur-xl md:hidden">
+            <nav className="flex flex-col space-y-1">
+              <a
+                href="#results"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
+              >
+                <span>Results</span>
+                <ArrowRight className="h-4 w-4 text-muted-foreground/60" />
+              </a>
+              <Link
+                href="/pricing"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
+              >
+                <span>Pricing</span>
+                <ArrowRight className="h-4 w-4 text-muted-foreground/60" />
+              </Link>
+            </nav>
+
+            <div className="mt-4 border-t border-border/60 pt-4">
+              <SignedOut>
+                <SignInButton mode="modal" forceRedirectUrl="/dashboard">
+                  <Button
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="w-full rounded-full bg-secondary py-2 text-sm font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80"
+                  >
+                    Login / Sign up
+                  </Button>
+                </SignInButton>
+              </SignedOut>
+
+              <SignedIn>
+                <Link
+                  href="/dashboard"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Button className="w-full rounded-full bg-secondary py-2 text-sm font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80">
+                    Go to Dashboard
+                  </Button>
+                </Link>
+              </SignedIn>
+            </div>
+          </div>
+        )}
       </header>
+
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 top-16 z-40 bg-black/60 backdrop-blur-xs md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
 
       <main className="flex-1">
         {/* ── Hero & Framed Video ── */}
