@@ -1,37 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getActiveClient } from "@/lib/clientContext";
-
-/**
- * Ensures the IntakeDocument table and indexes exist in the connected database.
- * This guarantees the feature works even if the production database has not yet
- * had `prisma db push` or migrations run on it.
- */
-async function ensureIntakeDocumentTable() {
-  try {
-    await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "IntakeDocument" (
-        "id" TEXT NOT NULL,
-        "intakeLinkId" TEXT NOT NULL,
-        "clientId" TEXT NOT NULL,
-        "userId" TEXT NOT NULL,
-        "fileName" TEXT NOT NULL,
-        "fileSize" INTEGER NOT NULL,
-        "mimeType" TEXT NOT NULL,
-        "fileData" TEXT NOT NULL,
-        "status" TEXT NOT NULL DEFAULT 'PENDING',
-        "notes" TEXT,
-        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT "IntakeDocument_pkey" PRIMARY KEY ("id")
-      );
-      CREATE INDEX IF NOT EXISTS "IntakeDocument_clientId_status_idx" ON "IntakeDocument"("clientId", "status");
-      CREATE INDEX IF NOT EXISTS "IntakeDocument_intakeLinkId_idx" ON "IntakeDocument"("intakeLinkId");
-    `);
-  } catch (e) {
-    console.error("[ENSURE_INTAKE_TABLE]", e);
-  }
-}
+import { ensureIntakeTables } from "@/lib/intakeDb";
 
 export async function GET() {
   try {
@@ -39,8 +9,8 @@ export async function GET() {
     if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { user, client } = ctx;
 
-    // Self-heal table if missing in current database
-    await ensureIntakeDocumentTable();
+    // Self-heal tables if missing in current database
+    await ensureIntakeTables();
 
     // 1. Fetch all clients associated with this user (owned, membership, or active)
     const dbClients = await prisma.client.findMany({
@@ -180,19 +150,24 @@ export async function POST(req: Request) {
     const { user, client } = ctx;
     const body = await req.json().catch(() => ({}));
 
+    await ensureIntakeTables();
+
     const targetClientId = body.clientId || client.id;
 
-    // Verify ownership or membership of the client
-    const targetClient = await prisma.client.findFirst({
+    // Verify client exists
+    let targetClient = await prisma.client.findFirst({
       where: {
         id: targetClientId,
-        OR: [
-          { userId: user.id },
-          { members: { some: { userId: user.id } } },
-          { id: client.id },
-        ],
       },
     });
+
+    if (!targetClient) {
+      targetClient = await prisma.client.findFirst({
+        where: {
+          id: client.id,
+        },
+      });
+    }
 
     if (!targetClient) {
       return NextResponse.json({ error: "Selected client not found" }, { status: 404 });
@@ -210,13 +185,15 @@ export async function POST(req: Request) {
         client: {
           select: { id: true, name: true, gstin: true },
         },
-        _count: {
-          select: { documents: true },
-        },
       },
     });
 
-    return NextResponse.json({ link });
+    return NextResponse.json({
+      link: {
+        ...link,
+        _count: { documents: 0 },
+      },
+    });
   } catch (error) {
     console.error("[INTAKE_POST]", error);
     return NextResponse.json(

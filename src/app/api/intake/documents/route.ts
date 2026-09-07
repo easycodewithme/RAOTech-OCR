@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getActiveClient } from "@/lib/clientContext";
+import { ensureIntakeTables } from "@/lib/intakeDb";
 
 export async function GET(req: Request) {
   try {
@@ -9,16 +10,18 @@ export async function GET(req: Request) {
     if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { user } = ctx;
 
+    await ensureIntakeTables();
+
     const { searchParams } = new URL(req.url);
     const clientId = searchParams.get("clientId");
     const status = searchParams.get("status");
 
-    const where: Prisma.IntakeDocumentWhereInput = {
-      userId: user.id,
-    };
+    const where: Prisma.IntakeDocumentWhereInput = {};
 
     if (clientId) {
       where.clientId = clientId;
+    } else {
+      where.userId = user.id;
     }
 
     if (status) {

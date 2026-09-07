@@ -16,7 +16,11 @@ export async function GET(
     const document = await prisma.intakeDocument.findFirst({
       where: {
         id: docId,
-        userId: user.id,
+        OR: [
+          { userId: user.id },
+          { client: { userId: user.id } },
+          { client: { members: { some: { userId: user.id } } } },
+        ],
       },
       include: {
         client: {
@@ -62,7 +66,11 @@ export async function PATCH(
     const document = await prisma.intakeDocument.findFirst({
       where: {
         id: docId,
-        userId: user.id,
+        OR: [
+          { userId: user.id },
+          { client: { userId: user.id } },
+          { client: { members: { some: { userId: user.id } } } },
+        ],
       },
     });
 
@@ -99,7 +107,11 @@ export async function DELETE(
     const document = await prisma.intakeDocument.findFirst({
       where: {
         id: docId,
-        userId: user.id,
+        OR: [
+          { userId: user.id },
+          { client: { userId: user.id } },
+          { client: { members: { some: { userId: user.id } } } },
+        ],
       },
     });
 

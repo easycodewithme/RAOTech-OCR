@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { ensureIntakeTables } from "@/lib/intakeDb";
 
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB per file
 const ALLOWED_MIME_TYPES = [
@@ -12,32 +13,6 @@ const ALLOWED_MIME_TYPES = [
   "image/tiff",
 ];
 
-async function ensureIntakeDocumentTable() {
-  try {
-    await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "IntakeDocument" (
-        "id" TEXT NOT NULL,
-        "intakeLinkId" TEXT NOT NULL,
-        "clientId" TEXT NOT NULL,
-        "userId" TEXT NOT NULL,
-        "fileName" TEXT NOT NULL,
-        "fileSize" INTEGER NOT NULL,
-        "mimeType" TEXT NOT NULL,
-        "fileData" TEXT NOT NULL,
-        "status" TEXT NOT NULL DEFAULT 'PENDING',
-        "notes" TEXT,
-        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT "IntakeDocument_pkey" PRIMARY KEY ("id")
-      );
-      CREATE INDEX IF NOT EXISTS "IntakeDocument_clientId_status_idx" ON "IntakeDocument"("clientId", "status");
-      CREATE INDEX IF NOT EXISTS "IntakeDocument_intakeLinkId_idx" ON "IntakeDocument"("intakeLinkId");
-    `);
-  } catch (e) {
-    console.error("[ENSURE_INTAKE_TABLE_UPLOAD]", e);
-  }
-}
-
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ token: string }> }
@@ -48,7 +23,7 @@ export async function POST(
       return NextResponse.json({ error: "Missing token" }, { status: 400 });
     }
 
-    await ensureIntakeDocumentTable();
+    await ensureIntakeTables();
 
     const link = await prisma.intakeLink.findUnique({
       where: { token },

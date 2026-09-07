@@ -101,6 +101,7 @@ export default function IntakePage() {
   const [linkLabel, setLinkLabel] = useState("");
   const [creatingLink, setCreatingLink] = useState(false);
   const [newlyCreatedLink, setNewlyCreatedLink] = useState<{ token: string; url: string; clientName: string } | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   // Document Preview Modal State
   const [previewDoc, setPreviewDoc] = useState<{ id: string; fileName: string; mimeType: string; fileData?: string } | null>(null);
@@ -194,31 +195,39 @@ export default function IntakePage() {
   }, [clientDocs, statusFilter]);
 
   async function handleCreateLink() {
-    if (!targetClientId) return;
+    const effectiveClientId = targetClientId || selectedClientId || clients[0]?.id;
+    if (!effectiveClientId) {
+      setModalError("Please select a client to create an intake link.");
+      return;
+    }
     setCreatingLink(true);
+    setModalError(null);
     try {
       const res = await fetch("/api/intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          clientId: targetClientId,
+          clientId: effectiveClientId,
           label: linkLabel.trim() || undefined,
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.link) {
         const fullUrl = `${window.location.origin}/intake/${data.link.token}`;
         setNewlyCreatedLink({
           token: data.link.token,
           url: fullUrl,
-          clientName: data.link.client.name,
+          clientName: data.link.client?.name || "Client",
         });
         setLinkLabel("");
         // Refresh links list
         await loadInitial();
+      } else {
+        setModalError(data.error || `Server error (${res.status}). Please try again.`);
       }
     } catch (err) {
       console.error(err);
+      setModalError(err instanceof Error ? err.message : "Failed to generate link");
     } finally {
       setCreatingLink(false);
     }
@@ -377,6 +386,7 @@ export default function IntakePage() {
             onClick={() => {
               setTargetClientId(selectedClientId || clients[0]?.id || "");
               setNewlyCreatedLink(null);
+              setModalError(null);
               setShowCreateModal(true);
             }}
             className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm px-4 py-2 font-medium"
@@ -505,6 +515,7 @@ export default function IntakePage() {
                     onClick={() => {
                       setTargetClientId(selectedClient.id);
                       setNewlyCreatedLink(null);
+                      setModalError(null);
                       setShowCreateModal(true);
                     }}
                     className="rounded-xl text-xs shrink-0"
@@ -607,6 +618,7 @@ export default function IntakePage() {
                     onClick={() => {
                       setTargetClientId(selectedClient.id);
                       setNewlyCreatedLink(null);
+                      setModalError(null);
                       setShowCreateModal(true);
                     }}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs"
@@ -815,10 +827,17 @@ export default function IntakePage() {
               </div>
             ) : (
               <div className="space-y-4">
+                {modalError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                    <span>{modalError}</span>
+                  </div>
+                )}
+
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">Select Client</label>
                   <select
-                    value={targetClientId}
+                    value={targetClientId || selectedClientId || clients[0]?.id || ""}
                     onChange={(e) => setTargetClientId(e.target.value)}
                     className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   >
@@ -842,7 +861,7 @@ export default function IntakePage() {
 
                 <Button
                   onClick={handleCreateLink}
-                  disabled={creatingLink || !targetClientId}
+                  disabled={creatingLink || clients.length === 0}
                   className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-5 font-semibold"
                 >
                   {creatingLink ? (
