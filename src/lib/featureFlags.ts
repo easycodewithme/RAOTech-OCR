@@ -3,7 +3,6 @@ export const LOCAL_ONLY_ROUTE_PREFIXES = [
   "/review",
   "/gst",
   "/reports",
-  "/intake",
   "/tasks",
   /**
    * Not yet real. Every thread, group and message on this screen comes from
@@ -18,7 +17,6 @@ export const LOCAL_ONLY_ROUTE_PREFIXES = [
 
 export const LOCAL_ONLY_API_PREFIXES = [
   "/api/gst",
-  "/api/intake",
   "/api/tasks",
   "/api/vouchers/auto-approve-high",
 ];

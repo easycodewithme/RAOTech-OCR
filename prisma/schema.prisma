@@ -33,6 +33,7 @@ model User {
   tallyExports   TallyExport[]
   tasks          Task[]          @relation("AssignedTasks")
   intakeLinks    IntakeLink[]
+  intakeDocuments IntakeDocument[]
 
   tallyCompanies   TallyCompany[]
   stockItems       StockItem[]
@@ -78,6 +79,7 @@ model Client {
   gst2bUploads   Gst2bUpload[]
   tallyExports   TallyExport[]
   intakeLinks    IntakeLink[]
+  intakeDocuments IntakeDocument[]
   tasks          Task[]
 
   // `tallyCompany` above is the legacy free-text company name pasted into
@@ -571,10 +573,35 @@ model IntakeLink {
   enabled   Boolean   @default(true)
   expiresAt DateTime?
 
+  documents IntakeDocument[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([clientId])
+}
+
+model IntakeDocument {
+  id           String      @id @default(uuid())
+  intakeLinkId String
+  intakeLink   IntakeLink  @relation(fields: [intakeLinkId], references: [id], onDelete: Cascade)
+  clientId     String
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fileName     String
+  fileSize     Int
+  mimeType     String
+  fileData     String      @db.Text
+  status       String      @default("PENDING") // PENDING | PROCESSED | REJECTED
+  notes        String?
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([clientId, status])
+  @@index([intakeLinkId])
 }
 
 model Task {
