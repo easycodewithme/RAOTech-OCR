@@ -78,12 +78,12 @@ export default async function PublicIntakePage({
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-indigo-50/30 flex flex-col justify-between p-4 sm:p-6 md:p-10">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200/50 flex flex-col justify-between p-4 sm:p-6 md:p-10">
       <div className="w-full max-w-xl mx-auto space-y-6">
         {/* Header Branding */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-indigo-600 font-semibold tracking-tight">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-md">
+          <div className="flex items-center gap-2 text-slate-900 font-bold tracking-tight">
+            <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-sm shadow-md">
               R
             </div>
             <span>RAOTech OCR</span>
@@ -97,7 +97,7 @@ export default async function PublicIntakePage({
         {/* Main Card */}
         <div className="rounded-3xl border border-slate-200/80 bg-white shadow-xl shadow-slate-200/50 p-6 sm:p-8 space-y-6">
           <div className="border-b border-slate-100 pb-5">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-indigo-600 mb-1">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">
               <Building2 className="w-3.5 h-3.5" />
               <span>{link.label || "Document Submission"}</span>
             </div>

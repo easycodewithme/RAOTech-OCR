@@ -25,6 +25,20 @@ import {
   AlertCircle,
 } from "lucide-react";
 
+function WhatsAppIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="24"
+      height="24"
+      fill="currentColor"
+      className={className}
+    >
+      <path d="M17.472 14.382c-.301-.15-1.78-.878-2.056-.978-.276-.1-.477-.15-.678.15-.201.3-.777.978-.952 1.178-.175.2-.351.226-.652.075-.301-.15-1.272-.469-2.423-1.496-.895-.798-1.5-1.784-1.675-2.085-.175-.3-.019-.462.132-.612.136-.135.301-.351.452-.527.15-.175.201-.3.301-.501.1-.2.05-.376-.025-.526-.075-.15-.678-1.635-.929-2.241-.244-.59-.492-.51-.678-.52-.175-.008-.376-.01-.577-.01-.201 0-.527.075-.803.376s-1.054 1.03-1.054 2.512c0 1.482 1.079 2.912 1.23 3.113.15.2 2.123 3.242 5.143 4.547.718.31 1.279.496 1.716.635.722.23 1.379.197 1.899.12.579-.086 1.78-.727 2.03-1.43.25-.702.25-1.304.175-1.43-.075-.125-.276-.201-.577-.351zM12.004 2C6.48 2 2 6.48 2 12.004c0 1.954.56 3.778 1.53 5.32L2 22l4.82-1.489A9.957 9.957 0 0 0 12.004 22c5.524 0 10.004-4.48 10.004-10.004C22.008 6.48 17.528 2 12.004 2zm0 18.064c-1.688 0-3.25-.503-4.56-1.365l-.327-.214-3.393 1.047 1.069-3.305-.236-.347A8.04 8.04 0 0 1 3.94 12.004C3.94 7.558 7.558 3.94 12.004 3.94c4.446 0 8.064 3.618 8.064 8.064 0 4.446-3.618 8.064-8.064 8.064z" />
+    </svg>
+  );
+}
+
 type ClientItem = {
   id: string;
   name: string;
@@ -369,7 +383,7 @@ export default function IntakePage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/80 pb-6">
         <div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center shadow-xs">
               <Inbox className="w-5 h-5" />
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
@@ -389,7 +403,7 @@ export default function IntakePage() {
               setModalError(null);
               setShowCreateModal(true);
             }}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm px-4 py-2 font-medium"
+            className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl shadow-xs px-4 py-2 font-medium transition-colors"
           >
             <Plus className="mr-2 h-4 w-4" /> Create Client Link
           </Button>
@@ -433,7 +447,7 @@ export default function IntakePage() {
           <div className="divide-y divide-slate-100 max-h-[640px] overflow-y-auto">
             {loadingInitial ? (
               <div className="p-8 text-center text-slate-400 text-sm">
-                <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-indigo-500" />
+                <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-slate-900" />
                 Loading clients...
               </div>
             ) : filteredClients.length === 0 ? (
@@ -450,14 +464,14 @@ export default function IntakePage() {
                     onClick={() => setSelectedClientId(client.id)}
                     className={`p-3.5 flex items-center justify-between cursor-pointer transition-all ${
                       isSelected
-                        ? "bg-indigo-50/80 border-l-4 border-indigo-600 pl-3"
+                        ? "bg-slate-100/90 border-l-4 border-slate-900 pl-3"
                         : "hover:bg-slate-50"
                     }`}
                   >
                     <div className="min-w-0 pr-2">
                       <div className="flex items-center gap-2">
-                        <Building2 className={`w-4 h-4 shrink-0 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />
-                        <span className={`font-semibold text-xs sm:text-sm truncate ${isSelected ? "text-indigo-950" : "text-slate-800"}`}>
+                        <Building2 className={`w-4 h-4 shrink-0 ${isSelected ? "text-slate-900" : "text-slate-400"}`} />
+                        <span className={`font-semibold text-xs sm:text-sm truncate ${isSelected ? "text-slate-950 font-bold" : "text-slate-800"}`}>
                           {client.name}
                         </span>
                       </div>
@@ -472,8 +486,8 @@ export default function IntakePage() {
                       {docCount > 0 ? (
                         <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
                           isSelected
-                            ? "bg-indigo-600 text-white shadow-xs"
-                            : "bg-indigo-100 text-indigo-700"
+                            ? "bg-slate-900 text-white shadow-xs"
+                            : "bg-slate-100 text-slate-600"
                         }`}>
                           {docCount} {docCount === 1 ? "doc" : "docs"}
                         </span>
@@ -553,7 +567,7 @@ export default function IntakePage() {
                                 type="button"
                                 title="Copy Link"
                                 onClick={() => copyToClipboard(fullUrl, link.token)}
-                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-white transition-colors"
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-colors"
                               >
                                 {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                               </button>
@@ -561,9 +575,9 @@ export default function IntakePage() {
                                 type="button"
                                 title="Share via WhatsApp"
                                 onClick={() => shareToWhatsApp(fullUrl, selectedClient.name)}
-                                className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-white transition-colors"
+                                className="p-1.5 rounded-lg text-[#25D366] hover:bg-emerald-50 hover:text-[#20bd5a] transition-colors"
                               >
-                                <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                <WhatsAppIcon className="w-4 h-4 fill-[#25D366]" />
                               </button>
                             </div>
                           </div>
@@ -601,12 +615,12 @@ export default function IntakePage() {
               {/* Documents Grid / List */}
               {loadingDocs ? (
                 <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-sm shadow-xs">
-                  <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-600" />
+                  <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-slate-900" />
                   Loading client documents...
                 </div>
               ) : filteredDocs.length === 0 ? (
                 <div className="bg-white border border-dashed border-slate-200 rounded-2xl p-12 text-center space-y-3 shadow-xs">
-                  <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center mx-auto">
                     <FileText className="w-6 h-6" />
                   </div>
                   <h3 className="font-semibold text-slate-800">No documents received yet</h3>
@@ -621,7 +635,7 @@ export default function IntakePage() {
                       setModalError(null);
                       setShowCreateModal(true);
                     }}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs"
+                    className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs shadow-xs"
                   >
                     <Share2 className="w-3.5 h-3.5 mr-1.5" /> Share Intake Link
                   </Button>
@@ -644,7 +658,7 @@ export default function IntakePage() {
                               <div
                                 className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                                   isImage
-                                    ? "bg-indigo-50 text-indigo-600"
+                                    ? "bg-slate-100 text-slate-800"
                                     : "bg-amber-50 text-amber-600"
                                 }`}
                               >
@@ -703,7 +717,7 @@ export default function IntakePage() {
                               size="sm"
                               onClick={() => triggerOcr(doc.id)}
                               disabled={isOcrRunning}
-                              className="h-8 rounded-lg text-xs px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                              className="h-8 rounded-lg text-xs px-2.5 bg-slate-900 hover:bg-slate-800 text-white shadow-xs"
                             >
                               {isOcrRunning ? (
                                 <>
@@ -811,9 +825,9 @@ export default function IntakePage() {
                 <div className="pt-2">
                   <Button
                     onClick={() => shareToWhatsApp(newlyCreatedLink.url, newlyCreatedLink.clientName)}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl py-5 font-semibold"
+                    className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-white rounded-xl py-5 font-semibold shadow-sm"
                   >
-                    <MessageCircle className="w-4 h-4 mr-2" /> 1-Click WhatsApp Share
+                    <WhatsAppIcon className="w-5 h-5 mr-2 fill-white" /> 1-Click WhatsApp Share
                   </Button>
                 </div>
 
@@ -839,7 +853,7 @@ export default function IntakePage() {
                   <select
                     value={targetClientId || selectedClientId || clients[0]?.id || ""}
                     onChange={(e) => setTargetClientId(e.target.value)}
-                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900"
                   >
                     {clients.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -862,7 +876,7 @@ export default function IntakePage() {
                 <Button
                   onClick={handleCreateLink}
                   disabled={creatingLink || clients.length === 0}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-5 font-semibold"
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white rounded-xl py-5 font-semibold shadow-xs"
                 >
                   {creatingLink ? (
                     <>
@@ -916,7 +930,7 @@ export default function IntakePage() {
             <div className="p-4 overflow-y-auto flex-1 flex items-center justify-center bg-slate-100/50 min-h-[400px]">
               {loadingPreview ? (
                 <div className="text-center text-slate-400 text-sm">
-                  <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-600" />
+                  <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-slate-900" />
                   Loading document preview...
                 </div>
               ) : previewDoc.fileData ? (
@@ -948,7 +962,7 @@ export default function IntakePage() {
           <div className="bg-white border border-slate-200 rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-indigo-600" />
+                <Sparkles className="w-5 h-5 text-slate-900" />
                 <h3 className="font-bold text-lg text-slate-900">OCR Extraction Completed</h3>
               </div>
               <button
@@ -997,7 +1011,7 @@ export default function IntakePage() {
               </div>
               <div className="flex justify-between py-1">
                 <span className="text-slate-500 font-bold">Total Amount:</span>
-                <span className="font-bold text-indigo-600 text-sm">
+                <span className="font-bold text-slate-900 text-sm">
                   ₹{String(ocrResult.data.total_amount || "0")}
                 </span>
               </div>

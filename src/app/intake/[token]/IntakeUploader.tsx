@@ -232,11 +232,11 @@ export function IntakeUploader({
         onClick={() => fileInputRef.current?.click()}
         className={`flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-8 cursor-pointer transition-all duration-150 text-center ${
           isDragging
-            ? "border-indigo-500 bg-indigo-50/50 scale-[0.99]"
-            : "border-slate-200 hover:border-indigo-400 hover:bg-slate-50/80 bg-slate-50/40"
+            ? "border-slate-900 bg-slate-100/60 scale-[0.99]"
+            : "border-slate-200 hover:border-slate-400 hover:bg-slate-50/80 bg-slate-50/40"
         }`}
       >
-        <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mb-3">
+        <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center mb-3">
           <UploadCloud className="h-6 w-6" />
         </div>
         <p className="text-sm font-semibold text-slate-800">
@@ -286,7 +286,7 @@ export function IntakeUploader({
                         className="w-9 h-9 object-cover rounded-md border border-slate-200 shrink-0"
                       />
                     ) : (
-                      <div className="w-9 h-9 rounded-md bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                      <div className="w-9 h-9 rounded-md bg-slate-100 text-slate-800 flex items-center justify-center shrink-0">
                         <ImageIcon className="w-4 h-4" />
                       </div>
                     )
@@ -330,7 +330,7 @@ export function IntakeUploader({
               onChange={(e) => setNotes(e.target.value)}
               placeholder="e.g. September office supplies and electricity bill"
               rows={2}
-              className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+              className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-all resize-none"
             />
           </div>
         </div>
@@ -349,7 +349,7 @@ export function IntakeUploader({
         type="button"
         disabled={stagedFiles.length === 0 || status === "uploading"}
         onClick={handleUpload}
-        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl py-6 font-semibold shadow-md shadow-indigo-600/20 transition-all disabled:opacity-50"
+        className="w-full bg-slate-900 hover:bg-slate-800 text-white rounded-xl py-6 font-semibold shadow-md shadow-slate-900/20 transition-all disabled:opacity-50"
       >
         {status === "uploading" ? (
           <>
