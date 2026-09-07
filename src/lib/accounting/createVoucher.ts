@@ -220,29 +220,32 @@ export async function createDraftVoucherForInvoice(
     sortOrder: l.sortOrder,
   }));
 
-  const result = await prisma.$transaction(async (tx) => {
-    if (invoice.voucher) {
-      // Rebuild IN PLACE — keep the same voucher id so its URL and any
-      // in-flight client references (e.g. after a voucher-type switch) stay
-      // valid. Recreating with a new id orphaned the review page → 404.
-      await tx.voucherLine.deleteMany({ where: { voucherId: invoice.voucher.id } });
-      return tx.voucher.update({
-        where: { id: invoice.voucher.id },
-        data: { ...voucherFields, lines: { create: lineCreate } },
+  const result = await prisma.$transaction(
+    async (tx) => {
+      if (invoice.voucher) {
+        // Rebuild IN PLACE — keep the same voucher id so its URL and any
+        // in-flight client references (e.g. after a voucher-type switch) stay
+        // valid. Recreating with a new id orphaned the review page → 404.
+        await tx.voucherLine.deleteMany({ where: { voucherId: invoice.voucher.id } });
+        return tx.voucher.update({
+          where: { id: invoice.voucher.id },
+          data: { ...voucherFields, lines: { create: lineCreate } },
+          include: { lines: { orderBy: { sortOrder: "asc" } } },
+        });
+      }
+      return tx.voucher.create({
+        data: {
+          userId,
+          clientId,
+          invoiceId: invoice.id,
+          ...voucherFields,
+          lines: { create: lineCreate },
+        },
         include: { lines: { orderBy: { sortOrder: "asc" } } },
       });
-    }
-    return tx.voucher.create({
-      data: {
-        userId,
-        clientId,
-        invoiceId: invoice.id,
-        ...voucherFields,
-        lines: { create: lineCreate },
-      },
-      include: { lines: { orderBy: { sortOrder: "asc" } } },
-    });
-  });
+    },
+    { maxWait: 15_000, timeout: 30_000 }
+  );
 
   return result;
 }

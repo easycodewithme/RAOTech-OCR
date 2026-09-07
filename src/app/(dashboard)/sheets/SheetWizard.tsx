@@ -9,8 +9,10 @@ import {
   CheckCircle2,
   FileSpreadsheet,
   Loader2,
+  Pencil,
   Save,
   Sparkles,
+  Table2,
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,17 +25,20 @@ import {
   commitUpload,
   previewMapping,
   saveTemplate,
+  updateRows,
   uploadSheet,
   type MappingResponse,
   type UploadResponse,
 } from "@/components/sheetsClient";
 import type {
+  CellValue,
   ExcelDocType,
   ItemMode,
   SheetMapping,
 } from "@/lib/excel/types";
 import { LAYOUT_CONFIDENCE_FLOOR } from "@/lib/excel/types";
 import MasterPanel from "./MasterPanel";
+import SheetDataGrid from "./SheetDataGrid";
 
 /**
  * Spreadsheet → vouchers, in four steps.
@@ -102,7 +107,12 @@ export default function SheetWizard({
   const [committed, setCommitted] = useState<{ count: number } | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
 
-  const headers = uploaded?.headers ?? [];
+  // ── Editable data grid state ──────────────────────────────────────────
+  const [showGrid, setShowGrid] = useState(false);
+  const [editedRows, setEditedRows] = useState<Map<number, CellValue[]>>(new Map());
+  const [savingEdits, setSavingEdits] = useState(false);
+
+  const headers = useMemo(() => uploaded?.headers ?? [], [uploaded?.headers]);
   const isMaster = isMasterDocType(docType);
   const visibleSteps = isMaster ? MASTER_STEPS : STEPS;
 
@@ -171,6 +181,59 @@ export default function SheetWizard({
       setProgress(null);
     }
   }, [uploaded, templateName, headers, mapping]);
+
+  // ── Editable grid handlers ────────────────────────────────────────────
+  const handleCellEdit = useCallback(
+    (rowIndex: number, colIndex: number, value: CellValue) => {
+      setEditedRows((prev) => {
+        const next = new Map(prev);
+        const base = uploaded?.preview?.[rowIndex] ?? [];
+        const current = next.get(rowIndex) ?? [...base];
+        // Extend the array if colIndex is beyond current length
+        while (current.length <= colIndex) current.push(null);
+        current[colIndex] = value;
+        next.set(rowIndex, current);
+        return next;
+      });
+    },
+    [uploaded]
+  );
+
+  const doSaveEdits = useCallback(async () => {
+    if (!uploaded || editedRows.size === 0) return;
+    setSavingEdits(true);
+    setError(null);
+    try {
+      const edits = Array.from(editedRows.entries()).map(([row, cells]) => ({
+        row,
+        cells,
+      }));
+      await updateRows(uploaded.upload.id, edits);
+      // After save, merge edits into the preview so the grid shows saved state
+      if (uploaded.preview) {
+        for (const [row, cells] of editedRows) {
+          if (row < uploaded.preview.length) {
+            uploaded.preview[row] = cells;
+          }
+        }
+      }
+      setEditedRows(new Map());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save edits");
+    } finally {
+      setSavingEdits(false);
+    }
+  }, [uploaded, editedRows]);
+
+  /** Set of column indices currently assigned in the mapping, for grid highlight. */
+  const mappedColumns = useMemo(() => {
+    if (!mapping) return new Set<number>();
+    const s = new Set<number>();
+    for (const v of Object.values(mapping.fields)) {
+      if (typeof v === "number") s.add(v);
+    }
+    return s;
+  }, [mapping]);
 
   const setField = (key: keyof SheetMapping["fields"], value: number | null) =>
     setMapping((m) => (m ? { ...m, fields: { ...m.fields, [key]: value } } : m));
@@ -375,7 +438,57 @@ export default function SheetWizard({
 
       {step === "fields" && mapping && (
         <section className="space-y-4 rounded-lg border p-6">
-          <h2 className="font-medium">Which column holds what?</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-medium">Which column holds what?</h2>
+            <Button
+              variant={showGrid ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowGrid((v) => !v)}
+              className="gap-1.5"
+            >
+              {showGrid ? <Table2 className="size-3.5" /> : <Pencil className="size-3.5" />}
+              {showGrid ? "Hide data" : "Edit data"}
+            </Button>
+          </div>
+
+          {showGrid && uploaded?.preview && (
+            <div className="space-y-3">
+              <SheetDataGrid
+                headers={headers}
+                rows={uploaded.preview}
+                totalRows={uploaded.totalRows}
+                editedRows={editedRows}
+                onCellEdit={handleCellEdit}
+                mappedColumns={mappedColumns}
+              />
+              {editedRows.size > 0 && (
+                <div className="flex items-center gap-3">
+                  <Button
+                    size="sm"
+                    onClick={doSaveEdits}
+                    disabled={savingEdits}
+                    className="gap-1.5"
+                  >
+                    {savingEdits ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Save className="size-3.5" />
+                    )}
+                    Save {editedRows.size} edit{editedRows.size === 1 ? "" : "s"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditedRows(new Map())}
+                    disabled={savingEdits}
+                  >
+                    Discard changes
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid gap-3 sm:grid-cols-2">
             {FIELD_ORDER.filter((f) => {
               if (f.required === "WITH_ITEM") return mapping.itemMode === "WITH_ITEM";

@@ -69,3 +69,23 @@ export function decodeSheet(stored: unknown): ParsedSheet | null {
     totalRowsScanned: s.totalRowsScanned ?? s.rows.length,
   };
 }
+
+/**
+ * Apply sparse row edits to a decoded sheet, returning a new ParsedSheet.
+ *
+ * Each edit replaces the cells at its row index. Out-of-range indices are
+ * silently ignored so a stale client cannot corrupt the grid.
+ */
+export function applyEdits(
+  sheet: ParsedSheet,
+  edits: { row: number; cells: CellValue[] }[]
+): ParsedSheet {
+  const rows = sheet.rows.map((r) => [...r]);
+  for (const edit of edits) {
+    if (edit.row >= 0 && edit.row < rows.length && Array.isArray(edit.cells)) {
+      rows[edit.row] = edit.cells;
+    }
+  }
+  return { ...sheet, rows };
+}
+
