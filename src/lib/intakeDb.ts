@@ -4,8 +4,7 @@ let tablesEnsured = false;
 
 /**
  * Ensures IntakeLink and IntakeDocument tables and indexes exist in the connected database.
- * This guarantees the feature works even if the production database has not yet
- * had `prisma db push` or migrations run on it.
+ * Executes each DDL statement individually to avoid PostgreSQL prepared statement errors.
  */
 export async function ensureIntakeTables(): Promise<void> {
   if (tablesEnsured) return;
@@ -22,10 +21,18 @@ export async function ensureIntakeTables(): Promise<void> {
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "IntakeLink_pkey" PRIMARY KEY ("id")
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS "IntakeLink_token_key" ON "IntakeLink"("token");
-      CREATE INDEX IF NOT EXISTS "IntakeLink_clientId_idx" ON "IntakeLink"("clientId");
+      )
+    `);
 
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "IntakeLink_token_key" ON "IntakeLink"("token")
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "IntakeLink_clientId_idx" ON "IntakeLink"("clientId")
+    `);
+
+    await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "IntakeDocument" (
         "id" TEXT NOT NULL,
         "intakeLinkId" TEXT NOT NULL,
@@ -40,10 +47,17 @@ export async function ensureIntakeTables(): Promise<void> {
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "IntakeDocument_pkey" PRIMARY KEY ("id")
-      );
-      CREATE INDEX IF NOT EXISTS "IntakeDocument_clientId_status_idx" ON "IntakeDocument"("clientId", "status");
-      CREATE INDEX IF NOT EXISTS "IntakeDocument_intakeLinkId_idx" ON "IntakeDocument"("intakeLinkId");
+      )
     `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "IntakeDocument_clientId_status_idx" ON "IntakeDocument"("clientId", "status")
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "IntakeDocument_intakeLinkId_idx" ON "IntakeDocument"("intakeLinkId")
+    `);
+
     tablesEnsured = true;
   } catch (e) {
     console.error("[ENSURE_INTAKE_TABLES]", e);
