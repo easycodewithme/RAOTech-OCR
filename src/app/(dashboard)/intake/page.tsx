@@ -22,6 +22,7 @@ import {
   Loader2,
   Search,
   MessageCircle,
+  AlertCircle,
 } from "lucide-react";
 
 type ClientItem = {
@@ -109,15 +110,19 @@ export default function IntakePage() {
   const [ocrLoadingDocId, setOcrLoadingDocId] = useState<string | null>(null);
   const [ocrResult, setOcrResult] = useState<{ docId: string; data: OcrExtractedData } | null>(null);
 
+  // Error state
+  const [apiError, setApiError] = useState<string | null>(null);
+
   // Copy feedback tracking
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const loadInitial = useCallback(async () => {
     setLoadingInitial(true);
+    setApiError(null);
     try {
       const res = await fetch("/api/intake");
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        const data = await res.json();
         setClients(data.clients || []);
         setLinks(data.links || []);
         if (data.clients?.length > 0 && !selectedClientId) {
@@ -125,9 +130,12 @@ export default function IntakePage() {
           const best = data.clients.find((c: ClientItem) => c._count.intakeDocuments > 0) || data.clients[0];
           setSelectedClientId(best.id);
         }
+      } else {
+        setApiError(data.error || `Server responded with status ${res.status}`);
       }
     } catch (err) {
       console.error(err);
+      setApiError(err instanceof Error ? err.message : "Failed to load intake data");
     } finally {
       setLoadingInitial(false);
     }
@@ -377,6 +385,24 @@ export default function IntakePage() {
           </Button>
         </div>
       </div>
+
+      {/* Error Alert Banner */}
+      {apiError && (
+        <div className="flex items-center justify-between p-4 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>Could not load intake data: {apiError}</span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={loadInitial}
+            className="h-7 text-xs border-red-200 text-red-700 hover:bg-red-100"
+          >
+            Retry
+          </Button>
+        </div>
+      )}
 
       {/* Main Two-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
