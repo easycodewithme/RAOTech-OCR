@@ -97,7 +97,7 @@ async function goToPaymentGateway(
         email: "customer@example.com",
       },
       theme: {
-        color: "#0B1536",
+        color: "#0b0d10",
       },
       handler: async function (response: RazorpayResponse) {
         const verifyRes = await fetch("/api/billing/checkout", {
@@ -137,11 +137,12 @@ async function goToPaymentGateway(
 
 /* ────────────────────────────────────────────────────────────────
    Custom Bullet Icon matching PDF (target ring with center dot)
+   Rendered in crisp monochrome (black and white)
    ──────────────────────────────────────────────────────────────── */
 function BulletIcon() {
   return (
     <svg
-      className="mt-0.5 h-4 w-4 shrink-0 text-[#2563eb]"
+      className="mt-0.5 h-4 w-4 shrink-0 text-foreground"
       viewBox="0 0 16 16"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
@@ -153,7 +154,7 @@ function BulletIcon() {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Page Component
+   Page Component (Black and White Theme)
    ──────────────────────────────────────────────────────────────── */
 export default function PricingPage() {
   const router = useRouter();
@@ -183,53 +184,53 @@ export default function PricingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FDFEFE] text-slate-900 flex flex-col justify-between font-sans">
-      {/* ── Top Header Bar (matches dark blue RaoAI bar in PDF) ── */}
-      <header className="sticky top-0 z-50 bg-[#0B1536] text-white shadow-md">
+    <div className="min-h-screen bg-background text-foreground flex flex-col justify-between font-sans selection:bg-foreground selection:text-background">
+      {/* ── Top Header Bar (Black & White Theme) ── */}
+      <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-20 max-w-6xl items-center justify-between px-6 lg:px-8">
           {/* Brand Logo & Subtitle */}
           <Link href="/" className="flex items-center gap-3.5 group">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2563eb] text-xl font-extrabold text-white shadow-sm transition-transform group-hover:scale-105">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-foreground text-background text-xl font-extrabold shadow-sm transition-transform group-hover:scale-105">
               R
             </div>
             <div className="flex flex-col">
-              <span className="text-xl font-bold tracking-tight text-white leading-tight">
+              <span className="text-xl font-bold tracking-tight text-foreground leading-tight">
                 RaoAI
               </span>
-              <span className="text-xs text-blue-200/70 font-normal leading-tight">
+              <span className="text-xs text-muted-foreground font-normal leading-tight">
                 Invoice automation platform
               </span>
             </div>
           </Link>
 
           {/* Navigation Links */}
-          <nav className="hidden md:flex items-center gap-8 text-sm text-slate-300">
-            <Link href="/#platform" className="hover:text-white transition-colors">
+          <nav className="hidden md:flex items-center gap-8 text-sm text-muted-foreground">
+            <Link href="/#platform" className="hover:text-foreground transition-colors">
               Product
             </Link>
-            <Link href="/#platform" className="hover:text-white transition-colors">
+            <Link href="/#platform" className="hover:text-foreground transition-colors">
               Features
             </Link>
             <Link
               href="/pricing"
-              className="text-white font-medium relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[2px] after:w-full after:bg-[#2563eb]"
+              className="text-foreground font-medium relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[2px] after:w-full after:bg-foreground"
             >
               Pricing
             </Link>
-            <Link href="/demo" className="hover:text-white transition-colors flex items-center gap-1">
+            <Link href="/demo" className="hover:text-foreground transition-colors">
               Demo
             </Link>
           </nav>
 
           {/* Right Header Area */}
           <div className="flex items-center gap-4">
-            <span className="hidden sm:inline-block text-[11px] font-semibold uppercase tracking-[0.3em] text-blue-200/80 mr-2">
+            <span className="hidden sm:inline-block font-mono text-[11px] font-normal uppercase tracking-[0.25em] text-muted-foreground mr-2">
               P R I C I N G
             </span>
             {isSignedIn ? (
               <Button
                 onClick={() => router.push("/dashboard")}
-                className="rounded-xl bg-[#2563eb] hover:bg-blue-600 text-white text-xs font-semibold px-4 py-2"
+                className="rounded-xl bg-foreground hover:bg-foreground/90 text-background text-xs font-semibold px-4 py-2"
               >
                 Dashboard
               </Button>
@@ -238,13 +239,13 @@ export default function PricingPage() {
                 <SignInButton mode="modal" forceRedirectUrl="/dashboard">
                   <Button
                     variant="ghost"
-                    className="text-slate-300 hover:text-white hover:bg-slate-800/60 rounded-xl text-xs font-medium px-3.5"
+                    className="text-muted-foreground hover:text-foreground hover:bg-secondary rounded-xl text-xs font-medium px-3.5"
                   >
                     Sign In
                   </Button>
                 </SignInButton>
                 <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
-                  <Button className="rounded-xl bg-[#2563eb] hover:bg-blue-600 text-white text-xs font-semibold px-4 py-2 shadow-sm">
+                  <Button className="rounded-xl bg-foreground hover:bg-foreground/90 text-background text-xs font-semibold px-4 py-2 shadow-sm">
                     Sign Up
                   </Button>
                 </SignUpButton>
@@ -259,10 +260,10 @@ export default function PricingPage() {
         <div className="mx-auto max-w-6xl px-6 py-12 lg:py-16">
           {/* Header Title Section */}
           <div className="max-w-2xl">
-            <h1 className="text-3xl sm:text-4xl lg:text-[40px] font-extrabold tracking-tight text-slate-900 leading-tight">
+            <h1 className="text-3xl sm:text-4xl lg:text-[42px] font-extrabold tracking-tight text-foreground leading-tight">
               Plans &amp; Pricing
             </h1>
-            <p className="mt-3 text-base sm:text-lg text-slate-500 font-normal">
+            <p className="mt-3 text-base sm:text-lg text-muted-foreground font-normal">
               Simple, scalable invoice automation for CA firms and businesses.
             </p>
           </div>
@@ -270,34 +271,34 @@ export default function PricingPage() {
           {/* ── 3-Column Pricing Grid ── */}
           <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 items-stretch">
             {/* ── CARD 1: Professional (Most Popular) ── */}
-            <div className="relative flex flex-col rounded-[26px] border-2 border-[#2563eb] bg-white p-7 lg:p-8 shadow-sm transition-all hover:shadow-md">
+            <div className="relative flex flex-col rounded-[26px] border-2 border-foreground bg-card p-7 lg:p-8 shadow-lg shadow-black/40 transition-all">
               {/* Most Popular Badge */}
-              <div className="absolute -top-3.5 left-8 rounded-full bg-[#2563eb] px-4 py-1 text-[11px] font-bold uppercase tracking-wider text-white shadow-sm">
+              <div className="absolute -top-3.5 left-8 rounded-full bg-foreground px-4 py-1 text-[11px] font-bold uppercase tracking-wider text-background shadow-md">
                 MOST POPULAR
               </div>
 
               {/* Title & Price */}
               <div className="pt-2">
-                <h3 className="text-2xl font-bold tracking-tight text-[#1e40af]">
+                <h3 className="text-2xl font-bold tracking-tight text-foreground">
                   Professional
                 </h3>
                 <div className="mt-3 flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold tracking-tight text-slate-900">
+                  <span className="text-4xl font-extrabold tracking-tight text-foreground">
                     ₹7,999
                   </span>
-                  <span className="text-slate-500 text-sm font-normal">/month</span>
+                  <span className="text-muted-foreground text-sm font-normal">/month</span>
                 </div>
               </div>
 
               {/* Divider */}
-              <div className="my-6 border-t border-slate-100" />
+              <div className="my-6 border-t border-border" />
 
               {/* Best For Section */}
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
                   BEST FOR
                 </p>
-                <p className="mt-1.5 text-sm font-semibold text-slate-900 leading-snug">
+                <p className="mt-1.5 text-sm font-semibold text-foreground leading-snug">
                   CA firms and growing professional teams
                 </p>
               </div>
@@ -306,54 +307,52 @@ export default function PricingPage() {
               <ul className="mt-6 space-y-4 flex-1">
                 <li className="flex items-start gap-3">
                   <BulletIcon />
-                  <span className="text-sm text-slate-600 leading-snug">
+                  <span className="text-sm text-muted-foreground leading-snug">
                     Built for regular invoice-processing workflows
                   </span>
                 </li>
                 <li className="flex items-start gap-3">
                   <BulletIcon />
-                  <span className="text-sm text-slate-600 leading-snug">
+                  <span className="text-sm text-muted-foreground leading-snug">
                     The step from manual work to automation
                   </span>
                 </li>
               </ul>
 
-              {/* Card Action */}
+              {/* Card Action: Schedule a Demo linking to /demo */}
               <div className="mt-8 pt-2">
-                <Button
-                  onClick={() => handleSelectPlan("professional")}
-                  disabled={loadingPlan === "professional"}
-                  className="w-full rounded-xl bg-[#2563eb] hover:bg-blue-700 text-white font-semibold py-5 text-sm shadow-sm transition-colors"
-                >
-                  {loadingPlan === "professional" ? "Preparing checkout..." : "Choose Professional"}
-                </Button>
+                <Link href="/demo" className="w-full block">
+                  <Button className="w-full rounded-xl bg-foreground hover:bg-foreground/90 text-background font-semibold py-5 text-sm shadow-sm transition-colors">
+                    Schedule a Demo
+                  </Button>
+                </Link>
               </div>
             </div>
 
             {/* ── CARD 2: Business ── */}
-            <div className="relative flex flex-col rounded-[26px] border border-slate-200 bg-white p-7 lg:p-8 shadow-sm transition-all hover:border-slate-300 hover:shadow-md">
+            <div className="relative flex flex-col rounded-[26px] border border-border bg-card p-7 lg:p-8 shadow-sm transition-all hover:border-border/80">
               {/* Title & Price */}
               <div className="pt-2">
-                <h3 className="text-2xl font-bold tracking-tight text-slate-900">
+                <h3 className="text-2xl font-bold tracking-tight text-foreground">
                   Business
                 </h3>
                 <div className="mt-3 flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold tracking-tight text-slate-900">
+                  <span className="text-4xl font-extrabold tracking-tight text-foreground">
                     ₹14,999
                   </span>
-                  <span className="text-slate-500 text-sm font-normal">/month</span>
+                  <span className="text-muted-foreground text-sm font-normal">/month</span>
                 </div>
               </div>
 
               {/* Divider */}
-              <div className="my-6 border-t border-slate-100" />
+              <div className="my-6 border-t border-border" />
 
               {/* Best For Section */}
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
                   BEST FOR
                 </p>
-                <p className="mt-1.5 text-sm font-semibold text-slate-900 leading-snug">
+                <p className="mt-1.5 text-sm font-semibold text-foreground leading-snug">
                   Medium businesses and larger CA firms
                 </p>
               </div>
@@ -362,25 +361,25 @@ export default function PricingPage() {
               <ul className="mt-6 space-y-4 flex-1">
                 <li className="flex items-start gap-3">
                   <BulletIcon />
-                  <span className="text-sm text-slate-600 leading-snug">
+                  <span className="text-sm text-muted-foreground leading-snug">
                     For larger teams and higher volumes
                   </span>
                 </li>
                 <li className="flex items-start gap-3">
                   <BulletIcon />
-                  <span className="text-sm text-slate-600 leading-snug">
+                  <span className="text-sm text-muted-foreground leading-snug">
                     Higher operational requirements covered
                   </span>
                 </li>
               </ul>
 
-              {/* Card Action */}
+              {/* Card Action: Choose Business */}
               <div className="mt-8 pt-2">
                 <Button
                   onClick={() => handleSelectPlan("business")}
                   disabled={loadingPlan === "business"}
                   variant="outline"
-                  className="w-full rounded-xl border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold py-5 text-sm shadow-sm transition-colors"
+                  className="w-full rounded-xl border-border bg-transparent hover:bg-secondary text-foreground font-semibold py-5 text-sm shadow-sm transition-colors"
                 >
                   {loadingPlan === "business" ? "Preparing checkout..." : "Choose Business"}
                 </Button>
@@ -388,32 +387,32 @@ export default function PricingPage() {
             </div>
 
             {/* ── CARD 3: Enterprise ── */}
-            <div className="relative flex flex-col rounded-[26px] border border-slate-200 bg-white p-7 lg:p-8 shadow-sm transition-all hover:border-slate-300 hover:shadow-md">
+            <div className="relative flex flex-col rounded-[26px] border border-border bg-card p-7 lg:p-8 shadow-sm transition-all hover:border-border/80">
               {/* Title & Price */}
               <div className="pt-2">
-                <h3 className="text-2xl font-bold tracking-tight text-slate-900">
+                <h3 className="text-2xl font-bold tracking-tight text-foreground">
                   Enterprise
                 </h3>
                 <div className="mt-3 flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold tracking-tight text-slate-900">
+                  <span className="text-4xl font-extrabold tracking-tight text-foreground">
                     ₹25,000+
                   </span>
-                  <span className="text-slate-500 text-sm font-normal">/month</span>
+                  <span className="text-muted-foreground text-sm font-normal">/month</span>
                 </div>
-                <p className="mt-1 text-xs text-slate-400 font-medium">
+                <p className="mt-1 text-xs text-muted-foreground font-medium">
                   ₹25,000–₹50,000+ range
                 </p>
               </div>
 
               {/* Divider */}
-              <div className="my-6 border-t border-slate-100" />
+              <div className="my-6 border-t border-border" />
 
               {/* Best For Section */}
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
                   BEST FOR
                 </p>
-                <p className="mt-1.5 text-sm font-semibold text-slate-900 leading-snug">
+                <p className="mt-1.5 text-sm font-semibold text-foreground leading-snug">
                   Large firms and companies with advanced requirements
                 </p>
               </div>
@@ -422,45 +421,46 @@ export default function PricingPage() {
               <ul className="mt-6 space-y-4 flex-1">
                 <li className="flex items-start gap-3">
                   <BulletIcon />
-                  <span className="text-sm text-slate-600 leading-snug">
+                  <span className="text-sm text-muted-foreground leading-snug">
                     Customised workflows and integrations
                   </span>
                 </li>
                 <li className="flex items-start gap-3">
                   <BulletIcon />
-                  <span className="text-sm text-slate-600 leading-snug">
+                  <span className="text-sm text-muted-foreground leading-snug">
                     Dedicated support and scale
                   </span>
                 </li>
               </ul>
 
-              {/* Card Action */}
+              {/* Card Action: Contact Sales */}
               <div className="mt-8 pt-2">
-                <Button
-                  onClick={() => router.push("/demo")}
-                  variant="outline"
-                  className="w-full rounded-xl border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold py-5 text-sm shadow-sm transition-colors"
-                >
-                  Contact Sales
-                </Button>
+                <Link href="/demo" className="w-full block">
+                  <Button
+                    variant="outline"
+                    className="w-full rounded-xl border-border bg-transparent hover:bg-secondary text-foreground font-semibold py-5 text-sm shadow-sm transition-colors"
+                  >
+                    Contact Sales
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>
 
           {/* ── Callout Banner: "Why ₹7,999/month is the main plan" ── */}
-          <div className="mt-14 rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm flex items-start gap-5 sm:gap-6">
-            <div className="w-1.5 self-stretch rounded-full bg-[#2563eb] shrink-0 min-h-[80px]" />
+          <div className="mt-14 rounded-2xl border border-border bg-card/70 p-6 sm:p-8 shadow-sm flex items-start gap-5 sm:gap-6">
+            <div className="w-1.5 self-stretch rounded-full bg-foreground shrink-0 min-h-[80px]" />
             <div className="space-y-2.5">
-              <h4 className="text-base sm:text-lg font-bold text-slate-900">
+              <h4 className="text-base sm:text-lg font-bold text-foreground">
                 Why ₹7,999/month is the main plan
               </h4>
-              <p className="text-sm text-slate-600 leading-relaxed">
+              <p className="text-sm text-muted-foreground leading-relaxed">
                 The Professional plan is designed to be the sweet spot for CA firms: powerful
                 enough for regular invoice-processing workflows, while remaining accessible
                 for firms that are moving from manual work to automation.
               </p>
-              <p className="text-sm text-slate-600 leading-relaxed">
-                <strong className="font-semibold text-slate-900">
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                <strong className="font-semibold text-foreground">
                   Scale when you need more.
                 </strong>{" "}
                 Move to Business for larger teams and higher operational requirements, or
@@ -476,13 +476,13 @@ export default function PricingPage() {
               {isSignedIn ? (
                 <Button
                   onClick={handleStartFree}
-                  className="rounded-xl bg-[#2563eb] hover:bg-blue-700 text-white font-semibold text-sm px-8 py-3.5 h-auto shadow-sm"
+                  className="rounded-xl bg-foreground hover:bg-foreground/90 text-background font-semibold text-sm px-8 py-3.5 h-auto shadow-sm"
                 >
                   Start free
                 </Button>
               ) : (
                 <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
-                  <Button className="rounded-xl bg-[#2563eb] hover:bg-blue-700 text-white font-semibold text-sm px-8 py-3.5 h-auto shadow-sm">
+                  <Button className="rounded-xl bg-foreground hover:bg-foreground/90 text-background font-semibold text-sm px-8 py-3.5 h-auto shadow-sm">
                     Start free
                   </Button>
                 </SignUpButton>
@@ -491,7 +491,7 @@ export default function PricingPage() {
               <Link href="/demo">
                 <Button
                   variant="outline"
-                  className="rounded-xl border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-sm px-8 py-3.5 h-auto shadow-sm"
+                  className="rounded-xl border-border bg-transparent hover:bg-secondary text-foreground font-semibold text-sm px-8 py-3.5 h-auto shadow-sm"
                 >
                   Book a demo
                 </Button>
@@ -500,10 +500,10 @@ export default function PricingPage() {
 
             {/* Growth Note */}
             <div className="max-w-md text-left md:text-right space-y-1">
-              <p className="text-sm font-semibold text-slate-800">
+              <p className="text-sm font-semibold text-foreground">
                 All plans are designed to grow with your workflow.
               </p>
-              <p className="text-xs text-slate-500 leading-relaxed">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 Contact RaoAI for enterprise requirements, custom integrations, team setup or
                 volume-based pricing.
               </p>
@@ -512,13 +512,13 @@ export default function PricingPage() {
         </div>
       </main>
 
-      {/* ── Dark Blue Footer Strip (matches PDF footer) ── */}
-      <footer className="bg-[#0B1536] text-slate-400 py-4 px-6 lg:px-8 border-t border-slate-800/80">
+      {/* ── Footer Strip (Black & White Theme) ── */}
+      <footer className="border-t border-border bg-background text-muted-foreground py-6 px-6 lg:px-8">
         <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-2 text-xs font-normal">
-          <p className="text-slate-300">
+          <p className="text-foreground/90">
             RaoAI — invoice automation for CA firms and businesses
           </p>
-          <p className="text-slate-400">
+          <p className="text-muted-foreground">
             Prices in INR, per month. Enterprise pricing on request.
           </p>
         </div>
