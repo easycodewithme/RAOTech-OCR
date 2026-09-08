@@ -373,16 +373,16 @@ export default function PricingPage() {
                 </li>
               </ul>
 
-              {/* Card Action: Choose Business */}
+              {/* Card Action: Schedule a Demo */}
               <div className="mt-8 pt-2">
-                <Button
-                  onClick={() => handleSelectPlan("business")}
-                  disabled={loadingPlan === "business"}
-                  variant="outline"
-                  className="w-full rounded-xl border-border bg-transparent hover:bg-secondary text-foreground font-semibold py-5 text-sm shadow-sm transition-colors"
-                >
-                  {loadingPlan === "business" ? "Preparing checkout..." : "Choose Business"}
-                </Button>
+                <Link href="/book-your-demo" className="w-full block">
+                  <Button
+                    variant="outline"
+                    className="w-full rounded-xl border-border bg-transparent hover:bg-secondary text-foreground font-semibold py-5 text-sm shadow-sm transition-colors"
+                  >
+                    Schedule a Demo
+                  </Button>
+                </Link>
               </div>
             </div>
 
@@ -433,14 +433,14 @@ export default function PricingPage() {
                 </li>
               </ul>
 
-              {/* Card Action: Contact Sales */}
+              {/* Card Action: Schedule a Demo */}
               <div className="mt-8 pt-2">
                 <Link href="/book-your-demo" className="w-full block">
                   <Button
                     variant="outline"
                     className="w-full rounded-xl border-border bg-transparent hover:bg-secondary text-foreground font-semibold py-5 text-sm shadow-sm transition-colors"
                   >
-                    Contact Sales
+                    Schedule a Demo
                   </Button>
                 </Link>
               </div>

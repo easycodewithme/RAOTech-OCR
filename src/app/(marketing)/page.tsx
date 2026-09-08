@@ -300,7 +300,7 @@ export default function LandingPage() {
             <SignedOut>
               <SignInButton mode="modal" forceRedirectUrl="/dashboard">
                 <Button className="rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80 px-6 font-medium shadow-sm transition-all">
-                  Login / Sign up
+                  Start Free
                 </Button>
               </SignInButton>
             </SignedOut>
@@ -308,7 +308,7 @@ export default function LandingPage() {
             <SignedIn>
               <Link href="/dashboard">
                 <Button className="rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80 px-6 font-medium shadow-sm transition-all">
-                  Login / Sign up
+                  Dashboard
                 </Button>
               </Link>
             </SignedIn>
@@ -322,7 +322,7 @@ export default function LandingPage() {
                   size="sm"
                   className="rounded-full bg-secondary px-3.5 py-1 text-xs font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80"
                 >
-                  Login
+                  Start Free
                 </Button>
               </SignInButton>
             </SignedOut>
@@ -383,7 +383,7 @@ export default function LandingPage() {
                     onClick={() => setMobileMenuOpen(false)}
                     className="w-full rounded-full bg-secondary py-2 text-sm font-medium text-secondary-foreground shadow-sm transition-all hover:bg-secondary/80"
                   >
-                    Login / Sign up
+                    Start Free
                   </Button>
                 </SignInButton>
               </SignedOut>
