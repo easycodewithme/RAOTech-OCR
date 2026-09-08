@@ -310,6 +310,13 @@ export default function LandingPage() {
 
           {/* Mobile Right Controls */}
           <div className="ml-auto flex items-center gap-2 md:hidden">
+            <Link
+              href="/pricing"
+              className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Pricing
+            </Link>
+
             <SignedOut>
               <SignInButton mode="modal" forceRedirectUrl="/dashboard">
                 <Button
