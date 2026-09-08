@@ -188,28 +188,21 @@ export default function PricingPage() {
       {/* ── Top Header Bar (Black & White Theme) ── */}
       <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-20 max-w-6xl items-center justify-between px-6 lg:px-8">
-          {/* Brand Logo & Subtitle */}
-          <Link href="/" className="flex items-center gap-3.5 group">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-foreground text-background text-xl font-extrabold shadow-sm transition-transform group-hover:scale-105">
-              R
-            </div>
-            <div className="flex flex-col">
-              <span className="text-xl font-bold tracking-tight text-foreground leading-tight">
-                RaoAI
-              </span>
-              <span className="text-xs text-muted-foreground font-normal leading-tight">
-                Invoice automation platform
-              </span>
-            </div>
+          {/* Brand Logo */}
+          <Link
+            href="/"
+            className="flex items-center gap-3 text-xl font-bold tracking-tight"
+          >
+            <span>RAO AI</span>
+            <span className="font-mono text-[11px] font-normal tracking-[0.2em] text-muted-foreground uppercase">
+              PLATFORM
+            </span>
           </Link>
 
           {/* Navigation Links */}
           <nav className="hidden md:flex items-center gap-8 text-sm text-muted-foreground">
             <Link href="/#platform" className="hover:text-foreground transition-colors">
               Product
-            </Link>
-            <Link href="/#platform" className="hover:text-foreground transition-colors">
-              Features
             </Link>
             <Link
               href="/pricing"
@@ -224,9 +217,6 @@ export default function PricingPage() {
 
           {/* Right Header Area */}
           <div className="flex items-center gap-4">
-            <span className="hidden sm:inline-block font-mono text-[11px] font-normal uppercase tracking-[0.25em] text-muted-foreground mr-2">
-              P R I C I N G
-            </span>
             {isSignedIn ? (
               <Button
                 onClick={() => router.push("/dashboard")}
@@ -246,7 +236,7 @@ export default function PricingPage() {
                 </SignInButton>
                 <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
                   <Button className="rounded-xl bg-foreground hover:bg-foreground/90 text-background text-xs font-semibold px-4 py-2 shadow-sm">
-                    Sign Up
+                    Get Started
                   </Button>
                 </SignUpButton>
               </div>

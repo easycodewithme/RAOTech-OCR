@@ -281,12 +281,6 @@ export default function LandingPage() {
           </Link>
 
           <nav className="ml-10 hidden items-center gap-8 font-medium text-sm text-muted-foreground md:flex">
-            <a
-              href="#results"
-              className="transition-colors hover:text-foreground"
-            >
-              Results
-            </a>
             <Link
               href="/pricing"
               className="transition-colors hover:text-foreground"
@@ -358,14 +352,6 @@ export default function LandingPage() {
         {mobileMenuOpen && (
           <div className="border-t border-border/80 bg-background/98 px-4 pt-3 pb-5 shadow-2xl backdrop-blur-xl md:hidden">
             <nav className="flex flex-col space-y-1">
-              <a
-                href="#results"
-                onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
-              >
-                <span>Results</span>
-                <ArrowRight className="h-4 w-4 text-muted-foreground/60" />
-              </a>
               <Link
                 href="/pricing"
                 onClick={() => setMobileMenuOpen(false)}
