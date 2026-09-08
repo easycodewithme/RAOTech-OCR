@@ -3,7 +3,7 @@
  * Calendly is now the active booking provider. Preserved but disabled.
  *
  * The former implementation exchanged the OAuth authorization code for a
- * refresh token, saved it in GoogleOAuthToken, and redirected to /demo.
+ * refresh token, saved it in GoogleOAuthToken, and redirected to /book-your-demo.
  */
 
 export {};

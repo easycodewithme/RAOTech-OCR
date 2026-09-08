@@ -21,7 +21,7 @@ function DemoPageContent() {
         try { return JSON.parse(event.data); } catch { return null; }
       })() : event.data;
       if (data?.event === "calendly.event_scheduled") {
-        router.push("/demo/success");
+        router.push("/book-your-demo/success");
       }
     }
     window.addEventListener("message", handleCalendlyMessage);

@@ -415,7 +415,7 @@ export default function TransactionsList({
           <Button
             size="sm"
             disabled={busy || !demoAccessChecked}
-            onClick={() => hasDemoAccess ? void exportTally() : router.push("/demo?returnTo=/transactions")}
+            onClick={() => hasDemoAccess ? void exportTally() : router.push("/book-your-demo?returnTo=/transactions")}
             className="bg-green-600 hover:bg-green-500 text-white"
           >
             <Download className="mr-2 h-4 w-4" />
@@ -425,7 +425,7 @@ export default function TransactionsList({
             size="sm"
             disabled={!demoAccessChecked}
             className="bg-[#0b6b3a] hover:bg-[#0a5c32]"
-            onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/demo?returnTo=/transactions")}
+            onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/book-your-demo?returnTo=/transactions")}
           >
             <Send className="mr-2 h-4 w-4" />
             {demoAccessChecked && !hasDemoAccess ? "Book a demo to push" : `Push to Tally (${selected.size})`}

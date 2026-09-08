@@ -163,7 +163,7 @@ export default function PricingPage() {
 
   async function handleSelectPlan(plan: "professional" | "business" | "enterprise") {
     if (plan === "enterprise") {
-      router.push("/demo");
+      router.push("/book-your-demo");
       return;
     }
 
@@ -217,7 +217,7 @@ export default function PricingPage() {
             >
               Pricing
             </Link>
-            <Link href="/demo" className="hover:text-foreground transition-colors">
+            <Link href="/book-your-demo" className="hover:text-foreground transition-colors">
               Demo
             </Link>
           </nav>
@@ -319,9 +319,9 @@ export default function PricingPage() {
                 </li>
               </ul>
 
-              {/* Card Action: Schedule a Demo linking to /demo */}
+              {/* Card Action: Schedule a Demo linking to /book-your-demo */}
               <div className="mt-8 pt-2">
-                <Link href="/demo" className="w-full block">
+                <Link href="/book-your-demo" className="w-full block">
                   <Button className="w-full rounded-xl bg-foreground hover:bg-foreground/90 text-background font-semibold py-5 text-sm shadow-sm transition-colors">
                     Schedule a Demo
                   </Button>
@@ -435,7 +435,7 @@ export default function PricingPage() {
 
               {/* Card Action: Contact Sales */}
               <div className="mt-8 pt-2">
-                <Link href="/demo" className="w-full block">
+                <Link href="/book-your-demo" className="w-full block">
                   <Button
                     variant="outline"
                     className="w-full rounded-xl border-border bg-transparent hover:bg-secondary text-foreground font-semibold py-5 text-sm shadow-sm transition-colors"
@@ -488,7 +488,7 @@ export default function PricingPage() {
                 </SignUpButton>
               )}
 
-              <Link href="/demo">
+              <Link href="/book-your-demo">
                 <Button
                   variant="outline"
                   className="rounded-xl border-border bg-transparent hover:bg-secondary text-foreground font-semibold text-sm px-8 py-3.5 h-auto shadow-sm"

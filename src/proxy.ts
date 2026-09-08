@@ -17,6 +17,7 @@ const isPublicRoute = createRouteMatcher([
   "/api/intake/(.*)/upload",
   "/api/intake/(.*)/info",
   "/pricing(.*)",
+  "/book-your-demo(.*)",
   "/demo(.*)",
   "/enterprise/invite(.*)",
 ]);
