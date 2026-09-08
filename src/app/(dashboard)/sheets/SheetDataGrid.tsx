@@ -33,6 +33,7 @@ export default function SheetDataGrid({
   mappedColumns,
 }: SheetDataGridProps) {
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
+  const [editValue, setEditValue] = useState<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const displayRows = rows.slice(0, MAX_DISPLAY_ROWS);
@@ -64,28 +65,38 @@ export default function SheetDataGrid({
     return String(v);
   };
 
-  const handleCellClick = (rowIdx: number, colIdx: number) => {
-    setEditingCell({ row: rowIdx, col: colIdx });
-    // Focus the input on next tick
-    setTimeout(() => inputRef.current?.focus(), 0);
-  };
-
-  const handleInputBlur = () => {
-    setEditingCell(null);
-  };
-
-  const handleInputChange = (rowIdx: number, colIdx: number, rawValue: string) => {
-    // Try to preserve number types
-    let value: CellValue = rawValue;
-    if (rawValue === "") {
-      value = null;
-    } else {
-      const num = Number(rawValue);
-      if (!isNaN(num) && rawValue.trim() !== "") {
-        value = num;
+  const commitCell = useCallback(
+    (rowIdx: number, colIdx: number, rawValue: string) => {
+      let value: CellValue = rawValue;
+      if (rawValue === "") {
+        value = null;
+      } else {
+        const num = Number(rawValue);
+        if (!isNaN(num) && rawValue.trim() !== "") {
+          value = num;
+        }
       }
+      onCellEdit(rowIdx, colIdx, value);
+    },
+    [onCellEdit]
+  );
+
+  const handleCellClick = (rowIdx: number, colIdx: number) => {
+    if (editingCell) {
+      commitCell(editingCell.row, editingCell.col, editValue);
     }
-    onCellEdit(rowIdx, colIdx, value);
+    const currentVal = getCellValue(rowIdx, colIdx);
+    setEditingCell({ row: rowIdx, col: colIdx });
+    setEditValue(formatCell(currentVal));
+    setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 0);
+  };
+
+  const handleInputBlur = (rowIdx: number, colIdx: number) => {
+    commitCell(rowIdx, colIdx, editValue);
+    setEditingCell(null);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, rowIdx: number, colIdx: number) => {
@@ -93,16 +104,38 @@ export default function SheetDataGrid({
       setEditingCell(null);
     } else if (e.key === "Tab") {
       e.preventDefault();
+      commitCell(rowIdx, colIdx, editValue);
       const nextCol = e.shiftKey ? colIdx - 1 : colIdx + 1;
       if (nextCol >= 0 && nextCol < headers.length) {
+        const nextVal = getCellValue(rowIdx, nextCol);
         setEditingCell({ row: rowIdx, col: nextCol });
+        setEditValue(formatCell(nextVal));
+        setTimeout(() => {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        }, 0);
       } else if (!e.shiftKey && rowIdx + 1 < displayRows.length) {
+        const nextVal = getCellValue(rowIdx + 1, 0);
         setEditingCell({ row: rowIdx + 1, col: 0 });
+        setEditValue(formatCell(nextVal));
+        setTimeout(() => {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        }, 0);
+      } else {
+        setEditingCell(null);
       }
     } else if (e.key === "Enter") {
       e.preventDefault();
+      commitCell(rowIdx, colIdx, editValue);
       if (rowIdx + 1 < displayRows.length) {
+        const nextVal = getCellValue(rowIdx + 1, colIdx);
         setEditingCell({ row: rowIdx + 1, col: colIdx });
+        setEditValue(formatCell(nextVal));
+        setTimeout(() => {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        }, 0);
       } else {
         setEditingCell(null);
       }
@@ -167,12 +200,13 @@ export default function SheetDataGrid({
                         <input
                           ref={inputRef}
                           type="text"
-                          className="w-full bg-background px-2.5 py-1.5 text-sm text-foreground outline-none ring-1 ring-primary/50 rounded-sm"
-                          defaultValue={formatCell(value)}
-                          onBlur={(e) => {
-                            handleInputChange(rowIdx, colIdx, e.target.value);
-                            handleInputBlur();
+                          className="w-full bg-background px-2.5 py-1.5 text-sm text-foreground outline-none ring-2 ring-primary rounded-sm shadow-xs"
+                          value={editValue}
+                          onChange={(e) => {
+                            setEditValue(e.target.value);
+                            commitCell(rowIdx, colIdx, e.target.value);
                           }}
+                          onBlur={() => handleInputBlur(rowIdx, colIdx)}
                           onKeyDown={(e) => handleKeyDown(e, rowIdx, colIdx)}
                         />
                       ) : (

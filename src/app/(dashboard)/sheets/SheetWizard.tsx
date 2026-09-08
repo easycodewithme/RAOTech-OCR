@@ -111,6 +111,7 @@ export default function SheetWizard({
   const [showGrid, setShowGrid] = useState(false);
   const [editedRows, setEditedRows] = useState<Map<number, CellValue[]>>(new Map());
   const [savingEdits, setSavingEdits] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const headers = useMemo(() => uploaded?.headers ?? [], [uploaded?.headers]);
   const isMaster = isMasterDocType(docType);
@@ -144,6 +145,16 @@ export default function SheetWizard({
       setBusy(true);
       setError(null);
       try {
+        if (editedRows.size > 0) {
+          const edits = Array.from(editedRows.entries()).map(([row, cells]) => ({
+            row,
+            cells,
+          }));
+          await updateRows(uploaded.upload.id, edits).catch((err) => {
+            console.error("Auto-saving edits before preview warning:", err);
+          });
+          setEditedRows(new Map());
+        }
         const res = await previewMapping(uploaded.upload.id, mapping);
         setPreview(res);
         setStep(next);
@@ -153,7 +164,7 @@ export default function SheetWizard({
         setBusy(false);
       }
     },
-    [uploaded, mapping]
+    [uploaded, mapping, editedRows]
   );
 
   const doCommit = useCallback(async () => {
@@ -185,11 +196,22 @@ export default function SheetWizard({
   // ── Editable grid handlers ────────────────────────────────────────────
   const handleCellEdit = useCallback(
     (rowIndex: number, colIndex: number, value: CellValue) => {
+      setUploaded((prev) => {
+        if (!prev || !prev.preview) return prev;
+        const newPreview = prev.preview.map((r, rIdx) => {
+          if (rIdx !== rowIndex) return r;
+          const newRow = [...r];
+          while (newRow.length <= colIndex) newRow.push(null);
+          newRow[colIndex] = value;
+          return newRow;
+        });
+        return { ...prev, preview: newPreview };
+      });
+
       setEditedRows((prev) => {
         const next = new Map(prev);
         const base = uploaded?.preview?.[rowIndex] ?? [];
-        const current = next.get(rowIndex) ?? [...base];
-        // Extend the array if colIndex is beyond current length
+        const current = next.get(rowIndex) ? [...next.get(rowIndex)!] : [...base];
         while (current.length <= colIndex) current.push(null);
         current[colIndex] = value;
         next.set(rowIndex, current);
@@ -209,15 +231,9 @@ export default function SheetWizard({
         cells,
       }));
       await updateRows(uploaded.upload.id, edits);
-      // After save, merge edits into the preview so the grid shows saved state
-      if (uploaded.preview) {
-        for (const [row, cells] of editedRows) {
-          if (row < uploaded.preview.length) {
-            uploaded.preview[row] = cells;
-          }
-        }
-      }
       setEditedRows(new Map());
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save edits");
     } finally {
@@ -461,29 +477,38 @@ export default function SheetWizard({
                 onCellEdit={handleCellEdit}
                 mappedColumns={mappedColumns}
               />
-              {editedRows.size > 0 && (
+              {(editedRows.size > 0 || saveSuccess) && (
                 <div className="flex items-center gap-3">
-                  <Button
-                    size="sm"
-                    onClick={doSaveEdits}
-                    disabled={savingEdits}
-                    className="gap-1.5"
-                  >
-                    {savingEdits ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Save className="size-3.5" />
-                    )}
-                    Save {editedRows.size} edit{editedRows.size === 1 ? "" : "s"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEditedRows(new Map())}
-                    disabled={savingEdits}
-                  >
-                    Discard changes
-                  </Button>
+                  {editedRows.size > 0 && (
+                    <>
+                      <Button
+                        size="sm"
+                        onClick={doSaveEdits}
+                        disabled={savingEdits}
+                        className="gap-1.5 bg-slate-900 hover:bg-slate-800 text-white"
+                      >
+                        {savingEdits ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Save className="size-3.5" />
+                        )}
+                        Save {editedRows.size} edit{editedRows.size === 1 ? "" : "s"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditedRows(new Map())}
+                        disabled={savingEdits}
+                      >
+                        Discard changes
+                      </Button>
+                    </>
+                  )}
+                  {saveSuccess && (
+                    <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                      <CheckCircle2 className="size-3.5" /> All edits saved!
+                    </span>
+                  )}
                 </div>
               )}
             </div>
