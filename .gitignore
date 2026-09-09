@@ -56,3 +56,6 @@ next-env.d.ts
 
 # reference connector pairing state — holds a live bearer token
 .ref-connector.json
+
+# scratch build directory
+scratch/

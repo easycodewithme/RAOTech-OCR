@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Download,
   Loader2,
   Monitor,
   PlugZap,
@@ -354,7 +355,33 @@ function DeviceSection({
         </div>
       ) : code ? (
         <div className="space-y-4 p-4">
+          <div className="rounded-xl border border-slate-200 dark:border-zinc-800 bg-gradient-to-r from-slate-50 to-emerald-50/30 dark:from-zinc-900 dark:to-emerald-950/20 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm">
+                  <Download className="h-4 w-4" />
+                </span>
+                <h3 className="font-semibold text-sm text-slate-900 dark:text-zinc-100">
+                  Rao-Tech Desktop Connector for Windows
+                </h3>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-zinc-400 mt-1">
+                Download and run this lightweight app on the computer with TallyPrime. No setup or terminal required.
+              </p>
+            </div>
+            <a
+              href="/downloads/RaoTech-Connector.exe"
+              download="RaoTech-Connector.exe"
+              className="inline-flex items-center justify-center rounded-lg bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-zinc-200 text-white dark:text-slate-900 px-4 py-2.5 text-xs font-semibold shadow-sm transition-colors shrink-0"
+            >
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Download (.exe)
+            </a>
+          </div>
+
           <div className="rounded-xl border border-dashed border-slate-300 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/50 px-4 py-6 text-center">
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-zinc-400 mb-1">
+              Your 8-Character Pairing Code
+            </p>
             <p className="font-mono text-4xl font-bold tracking-[0.3em] text-gray-900 dark:text-zinc-100">{code.code}</p>
             <p className="mt-2 text-xs text-gray-500 dark:text-zinc-400">
               Expires in{" "}
@@ -363,24 +390,55 @@ function DeviceSection({
               </span>
             </p>
           </div>
-          <p className="text-sm text-gray-600 dark:text-zinc-300">
-            Open the Rao-Tech connector on the machine running Tally and enter this code. This page
-            will switch over on its own the moment it is claimed.
-          </p>
-          <p className="flex items-center gap-2 text-xs text-gray-400 dark:text-zinc-500">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for the connector…
+
+          <div className="rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/30 p-4 text-xs text-emerald-950 dark:text-emerald-200 space-y-2">
+            <p className="font-semibold text-sm text-emerald-900 dark:text-emerald-300">
+              How to connect in 3 simple steps:
+            </p>
+            <ol className="list-decimal list-inside space-y-1.5 text-emerald-900/80 dark:text-emerald-300/90 leading-relaxed">
+              <li>Open <strong>TallyPrime</strong> with your company on your Windows PC (ODBC port 9000).</li>
+              <li>Launch <strong>RaoTech-Connector.exe</strong> on that PC.</li>
+              <li>Type the code <strong className="font-mono font-bold text-emerald-950 dark:text-white bg-emerald-100 dark:bg-emerald-900/50 px-1 py-0.5 rounded">{code.code}</strong> and click <strong>Pair & Connect</strong>.</li>
+            </ol>
+            <p className="text-emerald-700 dark:text-emerald-400 text-[11px] pt-1">
+              ✓ Once claimed, this screen automatically switches to <strong>Online</strong>!
+            </p>
+          </div>
+
+          <p className="flex items-center gap-2 text-xs text-gray-400 dark:text-zinc-500 pt-1">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" /> Waiting for the connector to claim this code…
           </p>
         </div>
       ) : (
-        <div className="space-y-3 p-4">
-          <p className="text-sm text-gray-600 dark:text-zinc-300">
-            No device is paired. Tally listens only on the accountant&apos;s own machine, so a small
-            desktop connector runs there and polls this workspace for work — nothing dials in.
-          </p>
-          <Button size="sm" onClick={pair} disabled={busy === "pair"}>
-            {busy === "pair" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Pair a device
-          </Button>
+        <div className="space-y-4 p-4">
+          <div className="rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900/40 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-sm text-slate-900 dark:text-zinc-100 flex items-center gap-1.5">
+                <Download className="h-4 w-4 text-emerald-600" />
+                Rao-Tech Desktop Connector (.exe)
+              </h3>
+              <p className="text-xs text-gray-500 dark:text-zinc-400 mt-0.5">
+                Install once on the Windows computer running TallyPrime to bridge vouchers and masters.
+              </p>
+            </div>
+            <a
+              href="/downloads/RaoTech-Connector.exe"
+              download="RaoTech-Connector.exe"
+              className="inline-flex items-center justify-center rounded-lg border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-200 px-3.5 py-1.5 text-xs font-medium shadow-sm transition-colors shrink-0"
+            >
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Download .exe
+            </a>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600 dark:text-zinc-300">
+              No device is currently paired. Generate a pairing code to link your desktop connector with this workspace.
+            </p>
+            <Button size="sm" onClick={pair} disabled={busy === "pair"}>
+              {busy === "pair" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Pair a device
+            </Button>
+          </div>
         </div>
       )}
 
