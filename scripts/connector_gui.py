@@ -169,17 +169,33 @@ class TallyConnectorApp:
         cloud_box = tk.Frame(status_frame, bg="#1F2937", padx=12, pady=10, highlightbackground="#374151", highlightthickness=1)
         cloud_box.pack(fill="x", pady=4)
 
-        c_title = tk.Label(cloud_box, text=f"Rao-Tech Cloud ({self.cloud_url})", font=("Segoe UI", 9, "bold"), fg="#D1D5DB", bg="#1F2937")
-        c_title.pack(anchor="w")
+        c_header = tk.Frame(cloud_box, bg="#1F2937")
+        c_header.pack(fill="x")
+
+        self.c_title = tk.Label(c_header, text=f"Rao-Tech Cloud", font=("Segoe UI", 9, "bold"), fg="#D1D5DB", bg="#1F2937")
+        self.c_title.pack(side="left")
+
+        # Server Switcher Dropdown
+        self.server_var = tk.StringVar(value=self.cloud_url)
+        self.server_menu = ttk.Combobox(
+            c_header,
+            textvariable=self.server_var,
+            values=["http://localhost:3000", "https://rao-tech-ocr.vercel.app"],
+            state="readonly",
+            width=26,
+            font=("Segoe UI", 8),
+        )
+        self.server_menu.pack(side="right")
+        self.server_menu.bind("<<ComboboxSelected>>", self._on_server_change)
 
         self.cloud_status_lbl = tk.Label(
             cloud_box,
-            text="Waiting for pairing code...",
-            font=("Segoe UI", 9),
+            text=f"Target: {self.cloud_url} — Waiting for code",
+            font=("Segoe UI", 8),
             fg="#9CA3AF",
             bg="#1F2937",
         )
-        self.cloud_status_lbl.pack(anchor="w", pady=(2, 0))
+        self.cloud_status_lbl.pack(anchor="w", pady=(4, 0))
 
         # Pairing Card
         self.pair_box = tk.Frame(self.root, bg="#1F2937", padx=16, pady=14, highlightbackground="#374151", highlightthickness=1)
@@ -278,6 +294,11 @@ class TallyConnectorApp:
             self.log_area.see("end")
         self.root.after(0, _append)
 
+    def _on_server_change(self, event=None):
+        self.cloud_url = self.server_var.get().strip().rstrip("/")
+        self.cloud_status_lbl.config(text=f"Target: {self.cloud_url} — Waiting for code")
+        self.log(f"Switched target cloud to: {self.cloud_url}")
+
     def _load_state(self):
         if os.path.exists(STATE_FILE):
             try:
@@ -286,10 +307,14 @@ class TallyConnectorApp:
                     self.token = data.get("token", "")
                     self.device_id = data.get("deviceId", "")
                     self.device_name = data.get("deviceName", "Desktop-Agent")
+                    saved_cloud = data.get("cloudUrl")
+                    if saved_cloud:
+                        self.cloud_url = saved_cloud
+                        self.server_var.set(saved_cloud)
                     if self.token:
                         self.paired = True
                         self._update_paired_ui(True)
-                        self.log(f"Loaded existing pairing for device '{self.device_name}'")
+                        self.log(f"Loaded existing pairing for device '{self.device_name}' on {self.cloud_url}")
                         return
             except Exception as e:
                 self.log(f"Error loading state: {e}")
@@ -302,6 +327,7 @@ class TallyConnectorApp:
                     "token": self.token,
                     "deviceId": self.device_id,
                     "deviceName": self.device_name,
+                    "cloudUrl": self.cloud_url,
                 }, f, indent=2)
         except Exception as e:
             self.log(f"Error saving state: {e}")
@@ -310,18 +336,18 @@ class TallyConnectorApp:
         def _apply():
             if is_paired:
                 self.pair_title.config(text=f"Paired Device: {self.device_name or 'Desktop Connector'}")
-                self.pair_desc.config(text="Device is securely linked with your Rao-Tech workspace.")
+                self.pair_desc.config(text=f"Securely linked to {self.cloud_url}")
                 self.code_entry.pack_forget()
                 self.pair_btn.pack_forget()
                 self.unpair_btn.pack(anchor="w", pady=(6, 0))
-                self.cloud_status_lbl.config(text="Live Sync Active — Listening for jobs", fg="#10B981")
+                self.cloud_status_lbl.config(text=f"Live Sync Active ({self.cloud_url})", fg="#10B981")
             else:
                 self.pair_title.config(text="Pair With Rao-Tech Web Dashboard")
                 self.pair_desc.config(text="Enter the 8-character code shown on Settings -> Tally Connection:")
                 self.unpair_btn.pack_forget()
                 self.code_entry.pack(side="left", fill="x", expand=True, ipady=4, padx=(0, 8))
                 self.pair_btn.pack(side="right")
-                self.cloud_status_lbl.config(text="Not Paired — Enter code to connect", fg="#9CA3AF")
+                self.cloud_status_lbl.config(text=f"Target: {self.cloud_url} — Enter code to connect", fg="#9CA3AF")
         self.root.after(0, _apply)
 
     def _on_pair_click(self):
@@ -334,48 +360,66 @@ class TallyConnectorApp:
         self.log(f"Attempting to pair with code: {code}...")
 
         def _do_pair():
-            try:
-                machine_id = str(uuid.getnode())
-                device_name = platform.node() or "Windows-Desktop"
-                payload = json.dumps({
-                    "code": code,
-                    "deviceName": f"{device_name} (Tally)",
-                    "machineId": machine_id,
-                    "appVersion": "gui-1.0.0",
-                    "osVersion": f"{platform.system()} {platform.release()}",
-                }).encode("utf-8")
+            machine_id = str(uuid.getnode())
+            device_name = platform.node() or "Windows-Desktop"
+            payload = json.dumps({
+                "code": code,
+                "deviceName": f"{device_name} (Tally)",
+                "machineId": machine_id,
+                "appVersion": "gui-1.0.0",
+                "osVersion": f"{platform.system()} {platform.release()}",
+            }).encode("utf-8")
 
-                req = urllib.request.Request(
-                    f"{self.cloud_url}/api/connector/pair",
-                    data=payload,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
+            # Try chosen server first, then auto-fallback if 404
+            targets = [self.cloud_url]
+            if "localhost" in self.cloud_url and "https://rao-tech-ocr.vercel.app" not in targets:
+                targets.append("https://rao-tech-ocr.vercel.app")
+            elif "localhost" not in self.cloud_url and "http://localhost:3000" not in targets:
+                targets.append("http://localhost:3000")
 
-                self.token = data.get("token", "")
-                self.device_id = data.get("deviceId", "")
-                self.device_name = data.get("deviceName", device_name)
-                self.paired = True
-                self._save_state()
-                self._update_paired_ui(True)
-                self.log(f"Successfully paired as '{self.device_name}'!")
-                self.root.after(0, lambda: messagebox.showinfo("Connected", "Device paired successfully with Rao-Tech Cloud!"))
-            except urllib.error.HTTPError as e:
-                err_msg = e.read().decode("utf-8")
+            last_error = ""
+            for target_url in targets:
                 try:
-                    err_json = json.loads(err_msg)
-                    err_text = err_json.get("error", f"HTTP {e.code}")
-                except Exception:
-                    err_text = f"HTTP {e.code}"
-                self.log(f"Pairing failed: {err_text}")
-                self.root.after(0, lambda: messagebox.showerror("Pairing Failed", f"Could not pair device: {err_text}"))
-            except Exception as e:
-                self.log(f"Pairing error: {e}")
-                self.root.after(0, lambda: messagebox.showerror("Connection Error", f"Failed to reach cloud: {e}"))
-            finally:
-                self.root.after(0, lambda: self.pair_btn.config(state="normal", text="Pair & Connect"))
+                    self.log(f"Connecting to {target_url}/api/connector/pair...")
+                    req = urllib.request.Request(
+                        f"{target_url}/api/connector/pair",
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+
+                    self.cloud_url = target_url
+                    self.root.after(0, lambda u=target_url: self.server_var.set(u))
+                    self.token = data.get("token", "")
+                    self.device_id = data.get("deviceId", "")
+                    self.device_name = data.get("deviceName", device_name)
+                    self.paired = True
+                    self._save_state()
+                    self._update_paired_ui(True)
+                    self.log(f"Successfully paired as '{self.device_name}' on {target_url}!")
+                    self.root.after(0, lambda u=target_url: messagebox.showinfo("Connected", f"Device paired successfully with {u}!"))
+                    return
+                except urllib.error.HTTPError as e:
+                    err_msg = e.read().decode("utf-8", errors="replace")
+                    try:
+                        err_json = json.loads(err_msg)
+                        last_error = err_json.get("error", f"HTTP {e.code}")
+                    except Exception:
+                        last_error = f"HTTP {e.code}"
+                    self.log(f"Pair on {target_url} answered: {last_error}")
+                    if e.code != 404:
+                        break
+                except Exception as e:
+                    last_error = str(e)
+                    self.log(f"Connection to {target_url} failed: {e}")
+
+            self.root.after(0, lambda err=last_error: messagebox.showerror(
+                "Pairing Failed",
+                f"Could not pair code '{code}'.\n\nReason: {err}\n\nMake sure the code is fresh and you generated it on the same server selected in the dropdown."
+            ))
+            self.root.after(0, lambda: self.pair_btn.config(state="normal", text="Pair & Connect"))
 
         threading.Thread(target=_do_pair, daemon=True).start()
 

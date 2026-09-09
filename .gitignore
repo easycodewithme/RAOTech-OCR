@@ -59,3 +59,5 @@ next-env.d.ts
 
 # scratch build directory
 scratch/
+__pycache__/
+*.pyc
