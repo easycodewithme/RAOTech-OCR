@@ -19,6 +19,12 @@ export async function POST(
       include: { lines: true, invoice: true },
     });
     if (!voucher) return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
+
+    // Allow re-approval if already APPROVED or EXPORTED_DEMO
+    if (voucher.status === "APPROVED" || voucher.status === "EXPORTED_DEMO") {
+      return NextResponse.json({ voucher });
+    }
+
     if (voucher.status !== "DRAFT") {
       return NextResponse.json({ error: "Voucher is not a draft" }, { status: 409 });
     }

@@ -1,150 +1,71 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getActiveClient } from "@/lib/clientContext";
-import {
-  buildMasterCreatePayload,
-  buildVoucherPushPayload,
-  enqueueJob,
-  hasBlockingPushIssues,
-  preflightForPush,
-} from "@/lib/tally/syncJobs";
+import { rememberMapping } from "@/lib/accounting/rememberMapping";
+import { normGstin } from "@/lib/accounting/normalize";
 
-/**
- * POST /api/tally/push
- * Body: { voucherIds?: string[] } — omitted means every approved voucher.
- *
- * Order matters and is not negotiable: MASTER_CREATE before VOUCHER_PUSH,
- * because a voucher naming a ledger Tally has never heard of is rejected with
- * `Ledger 'X' does not exist!` and the batch around it partially succeeds. Both
- * go on the same FIFO queue, so the connector drains them in that order.
- */
-export async function POST(req: Request) {
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ voucherId: string }> }
+) {
   try {
     const ctx = await getActiveClient();
     if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { user, client } = ctx;
+    const { voucherId } = await params;
 
-    const company = await prisma.tallyCompany.findUnique({
-      where: { clientId: client.id },
+    const voucher = await prisma.voucher.findFirst({
+      where: { id: voucherId, userId: user.id, clientId: client.id },
+      include: { lines: true, invoice: true },
     });
+    if (!voucher) return NextResponse.json({ error: "Voucher not found" }, { status: 404 });
 
-    // The deliberate hard gate. Without a master pull we have no GUIDs, no book
-    // period to date-check against, and no evidence the company name we hold
-    // matches anything Tally will open — so a push would be a guess with real
-    // consequences in someone's books.
-    if (!company || company.status === "UNSYNCED") {
-      return NextResponse.json(
-        {
-          error:
-            "Sync masters from Tally before posting. Until the ledgers have been read back, nothing here can be matched to a ledger in Tally.",
-          status: company?.status ?? null,
-        },
-        { status: 409 }
-      );
+    // Allow re-approval if the voucher is already APPROVED or EXPORTED_DEMO
+    if (voucher.status === "APPROVED" || voucher.status === "EXPORTED_DEMO") {
+      return NextResponse.json({ voucher });
     }
 
-    const body = await req.json().catch(() => ({}));
-    const ids: string[] | undefined = Array.isArray(body.voucherIds)
-      ? body.voucherIds.map(String)
-      : undefined;
-
-    const vouchers = await prisma.voucher.findMany({
-      where: {
-        userId: user.id,
-        clientId: client.id,
-        status: { in: ["APPROVED", "EXPORTED_DEMO"] },
-        ...(ids?.length ? { id: { in: ids } } : {}),
-      },
-      include: {
-        lines: { orderBy: { sortOrder: "asc" } },
-        invoice: { select: { invoiceNumber: true } },
-      },
-      orderBy: { date: "asc" },
-    });
-
-    if (!vouchers.length) {
-      return NextResponse.json({ error: "No approved vouchers to post" }, { status: 404 });
+    if (voucher.status !== "DRAFT") {
+      return NextResponse.json({ error: "Voucher status cannot be changed" }, { status: 409 });
     }
 
-    // Only the lower bound is enforced, and only from booksFrom — Tally applies
-    // no upper bound at all, and its reported EndingAt is not the end of the
-    // postable range. See `preflightForPush`.
-    const issues = preflightForPush(
-      vouchers.map((v) => ({
-        id: v.id,
-        date: v.date,
-        invoiceNumber: v.invoice?.invoiceNumber,
-        lines: v.lines.map((l) => ({
-          ledgerName: l.ledgerNameSnapshot,
-          debit: l.debit,
-          credit: l.credit,
-        })),
-      })),
-      { booksFrom: company.booksFrom ?? company.fyStart }
-    );
-
-    if (hasBlockingPushIssues(issues)) {
+    const unmapped = voucher.lines.filter((l) => l.ledgerId === null);
+    if (unmapped.length > 0) {
       return NextResponse.json(
         {
-          error: "Some vouchers would be rejected by Tally",
-          issues: issues.filter((i) => i.severity === "error"),
-          warnings: issues.filter((i) => i.severity === "warning"),
+          error: "Cannot approve: some lines have no ledger assigned",
+          unmappedRoles: unmapped.map((l) => l.role),
         },
         { status: 422 }
       );
     }
 
-    const jobIds: string[] = [];
-    const voucherIds = vouchers.map((v) => v.id);
-
-    const ledgerIds = [
-      ...new Set(
-        vouchers.flatMap((v) => v.lines.map((l) => l.ledgerId).filter(Boolean) as string[])
-      ),
-    ];
-
-    const masters = await buildMasterCreatePayload(prisma, {
-      userId: user.id,
-      clientId: client.id,
-      companyName: company.companyName,
-      ledgerIds,
-    });
-
-    if (masters) {
-      const job = await enqueueJob(prisma, {
-        userId: user.id,
-        clientId: client.id,
-        tallyCompanyId: company.id,
-        kind: "MASTER_CREATE",
-        payload: { ...masters },
-      });
-      jobIds.push(job.id);
+    if (Math.abs(voucher.totalDebit - voucher.totalCredit) > 0.01) {
+      return NextResponse.json(
+        { error: "Cannot approve: voucher is not balanced" },
+        { status: 422 }
+      );
     }
 
-    const payload = await buildVoucherPushPayload(prisma, {
-      userId: user.id,
-      clientId: client.id,
-      tallyCompanyId: company.id,
-      companyName: company.companyName,
-      voucherIds,
+    const approved = await prisma.voucher.update({
+      where: { id: voucherId },
+      data: { status: "APPROVED", approvedAt: new Date(), approvedBy: user.id },
     });
 
-    const pushJob = await enqueueJob(prisma, {
-      userId: user.id,
-      clientId: client.id,
-      tallyCompanyId: company.id,
-      kind: "VOUCHER_PUSH",
-      payload: { ...payload },
-    });
-    jobIds.push(pushJob.id);
+    const partyLine = voucher.lines.find((l) => l.role === "PARTY");
+    if (partyLine?.ledgerId && voucher.invoice) {
+      await rememberMapping(
+        prisma,
+        user.id,
+        { vendor: voucher.invoice.vendor, vendorGstin: normGstin(voucher.invoice.vendorGstin) },
+        partyLine.ledgerId,
+        client.id
+      );
+    }
 
-    return NextResponse.json({
-      jobIds,
-      voucherIds,
-      warnings: issues.filter((i) => i.severity === "warning"),
-    });
+    return NextResponse.json({ voucher: approved });
   } catch (error) {
-    console.error("[TALLY_PUSH]", error);
-    return NextResponse.json({ error: "Failed to queue push" }, { status: 500 });
+    console.error("[VOUCHER_APPROVE_ERROR]", error);
+    return NextResponse.json({ error: "Failed to approve voucher" }, { status: 500 });
   }
 }
