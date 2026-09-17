@@ -9,8 +9,10 @@ import {
   CheckCircle2,
   FileSpreadsheet,
   Loader2,
+  Pencil,
   Save,
   Sparkles,
+  Table2,
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,17 +25,20 @@ import {
   commitUpload,
   previewMapping,
   saveTemplate,
+  updateRows,
   uploadSheet,
   type MappingResponse,
   type UploadResponse,
 } from "@/components/sheetsClient";
 import type {
+  CellValue,
   ExcelDocType,
   ItemMode,
   SheetMapping,
 } from "@/lib/excel/types";
 import { LAYOUT_CONFIDENCE_FLOOR } from "@/lib/excel/types";
 import MasterPanel from "./MasterPanel";
+import SheetDataGrid from "./SheetDataGrid";
 
 /**
  * Spreadsheet → vouchers, in four steps.
@@ -102,7 +107,13 @@ export default function SheetWizard({
   const [committed, setCommitted] = useState<{ count: number } | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
 
-  const headers = uploaded?.headers ?? [];
+  // ── Editable data grid state ──────────────────────────────────────────
+  const [showGrid, setShowGrid] = useState(false);
+  const [editedRows, setEditedRows] = useState<Map<number, CellValue[]>>(new Map());
+  const [savingEdits, setSavingEdits] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const headers = useMemo(() => uploaded?.headers ?? [], [uploaded?.headers]);
   const isMaster = isMasterDocType(docType);
   const visibleSteps = isMaster ? MASTER_STEPS : STEPS;
 
@@ -134,6 +145,16 @@ export default function SheetWizard({
       setBusy(true);
       setError(null);
       try {
+        if (editedRows.size > 0) {
+          const edits = Array.from(editedRows.entries()).map(([row, cells]) => ({
+            row,
+            cells,
+          }));
+          await updateRows(uploaded.upload.id, edits).catch((err) => {
+            console.error("Auto-saving edits before preview warning:", err);
+          });
+          setEditedRows(new Map());
+        }
         const res = await previewMapping(uploaded.upload.id, mapping);
         setPreview(res);
         setStep(next);
@@ -143,7 +164,7 @@ export default function SheetWizard({
         setBusy(false);
       }
     },
-    [uploaded, mapping]
+    [uploaded, mapping, editedRows]
   );
 
   const doCommit = useCallback(async () => {
@@ -171,6 +192,64 @@ export default function SheetWizard({
       setProgress(null);
     }
   }, [uploaded, templateName, headers, mapping]);
+
+  // ── Editable grid handlers ────────────────────────────────────────────
+  const handleCellEdit = useCallback(
+    (rowIndex: number, colIndex: number, value: CellValue) => {
+      setUploaded((prev) => {
+        if (!prev || !prev.preview) return prev;
+        const newPreview = prev.preview.map((r, rIdx) => {
+          if (rIdx !== rowIndex) return r;
+          const newRow = [...r];
+          while (newRow.length <= colIndex) newRow.push(null);
+          newRow[colIndex] = value;
+          return newRow;
+        });
+        return { ...prev, preview: newPreview };
+      });
+
+      setEditedRows((prev) => {
+        const next = new Map(prev);
+        const base = uploaded?.preview?.[rowIndex] ?? [];
+        const current = next.get(rowIndex) ? [...next.get(rowIndex)!] : [...base];
+        while (current.length <= colIndex) current.push(null);
+        current[colIndex] = value;
+        next.set(rowIndex, current);
+        return next;
+      });
+    },
+    [uploaded]
+  );
+
+  const doSaveEdits = useCallback(async () => {
+    if (!uploaded || editedRows.size === 0) return;
+    setSavingEdits(true);
+    setError(null);
+    try {
+      const edits = Array.from(editedRows.entries()).map(([row, cells]) => ({
+        row,
+        cells,
+      }));
+      await updateRows(uploaded.upload.id, edits);
+      setEditedRows(new Map());
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save edits");
+    } finally {
+      setSavingEdits(false);
+    }
+  }, [uploaded, editedRows]);
+
+  /** Set of column indices currently assigned in the mapping, for grid highlight. */
+  const mappedColumns = useMemo(() => {
+    if (!mapping) return new Set<number>();
+    const s = new Set<number>();
+    for (const v of Object.values(mapping.fields)) {
+      if (typeof v === "number") s.add(v);
+    }
+    return s;
+  }, [mapping]);
 
   const setField = (key: keyof SheetMapping["fields"], value: number | null) =>
     setMapping((m) => (m ? { ...m, fields: { ...m.fields, [key]: value } } : m));
@@ -244,12 +323,12 @@ export default function SheetWizard({
           return (
             <li
               key={s.id}
-              className={`rounded-md border px-3 py-1.5 ${
+              className={`rounded-lg border px-3.5 py-1.5 text-sm font-medium transition-all shadow-xs ${
                 active
-                  ? "border-foreground/30 bg-foreground/5 font-medium"
+                  ? "border-primary bg-primary text-primary-foreground font-semibold shadow-sm"
                   : done
-                    ? "border-emerald-500/30 text-emerald-600"
-                    : "border-border text-muted-foreground"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : "border-border bg-card/80 text-muted-foreground hover:bg-card hover:text-foreground"
               }`}
             >
               {i + 1}. {s.label}
@@ -266,18 +345,18 @@ export default function SheetWizard({
       )}
 
       {step === "upload" && (
-        <section className="space-y-6 rounded-lg border p-6">
+        <section className="space-y-6 rounded-xl border border-border bg-card p-6 shadow-sm">
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <Label htmlFor="docType">Document type</Label>
               <select
                 id="docType"
-                className="mt-1.5 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-xs transition-all outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                 value={docType}
                 onChange={(e) => setDocType(e.target.value as ExcelDocType)}
               >
                 {Object.entries(DOC_TYPE_LABELS).map(([v, l]) => (
-                  <option key={v} value={v}>
+                  <option key={v} value={v} className="bg-card text-foreground">
                     {l}
                   </option>
                 ))}
@@ -287,12 +366,12 @@ export default function SheetWizard({
               <Label htmlFor="itemMode">Does the sheet have item detail?</Label>
               <select
                 id="itemMode"
-                className="mt-1.5 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-xs transition-all outline-none focus:border-ring focus:ring-1 focus:ring-ring"
                 value={itemMode}
                 onChange={(e) => setItemMode(e.target.value as ItemMode)}
               >
-                <option value="WITHOUT_ITEM">No — one row per bill</option>
-                <option value="WITH_ITEM">Yes — one row per line item</option>
+                <option value="WITHOUT_ITEM" className="bg-card text-foreground">No — one row per bill</option>
+                <option value="WITH_ITEM" className="bg-card text-foreground">Yes — one row per line item</option>
               </select>
               <p className="mt-1.5 text-xs text-muted-foreground">
                 With item detail, several rows sharing an invoice number become one voucher.
@@ -375,7 +454,66 @@ export default function SheetWizard({
 
       {step === "fields" && mapping && (
         <section className="space-y-4 rounded-lg border p-6">
-          <h2 className="font-medium">Which column holds what?</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-medium">Which column holds what?</h2>
+            <Button
+              variant={showGrid ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowGrid((v) => !v)}
+              className="gap-1.5"
+            >
+              {showGrid ? <Table2 className="size-3.5" /> : <Pencil className="size-3.5" />}
+              {showGrid ? "Hide data" : "Edit data"}
+            </Button>
+          </div>
+
+          {showGrid && uploaded?.preview && (
+            <div className="space-y-3">
+              <SheetDataGrid
+                headers={headers}
+                rows={uploaded.preview}
+                totalRows={uploaded.totalRows}
+                editedRows={editedRows}
+                onCellEdit={handleCellEdit}
+                mappedColumns={mappedColumns}
+              />
+              {(editedRows.size > 0 || saveSuccess) && (
+                <div className="flex items-center gap-3">
+                  {editedRows.size > 0 && (
+                    <>
+                      <Button
+                        size="sm"
+                        onClick={doSaveEdits}
+                        disabled={savingEdits}
+                        className="gap-1.5 bg-slate-900 hover:bg-slate-800 text-white"
+                      >
+                        {savingEdits ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Save className="size-3.5" />
+                        )}
+                        Save {editedRows.size} edit{editedRows.size === 1 ? "" : "s"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditedRows(new Map())}
+                        disabled={savingEdits}
+                      >
+                        Discard changes
+                      </Button>
+                    </>
+                  )}
+                  {saveSuccess && (
+                    <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                      <CheckCircle2 className="size-3.5" /> All edits saved!
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid gap-3 sm:grid-cols-2">
             {FIELD_ORDER.filter((f) => {
               if (f.required === "WITH_ITEM") return mapping.itemMode === "WITH_ITEM";
@@ -394,7 +532,7 @@ export default function SheetWizard({
                     {required && <span className="ml-1 text-destructive">*</span>}
                   </Label>
                   <select
-                    className={`mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm ${
+                    className={`mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground ${
                       required && value === null ? "border-amber-500/60" : ""
                     }`}
                     value={value ?? ""}
@@ -402,9 +540,9 @@ export default function SheetWizard({
                       setField(f.key, e.target.value === "" ? null : Number(e.target.value))
                     }
                   >
-                    <option value="">— not in this sheet —</option>
+                    <option value="" className="bg-card text-muted-foreground">— not in this sheet —</option>
                     {headers.map((h, i) => (
-                      <option key={i} value={i}>
+                      <option key={i} value={i} className="bg-card text-foreground">
                         {h || `Column ${i + 1}`}
                       </option>
                     ))}
@@ -476,15 +614,15 @@ export default function SheetWizard({
                 <div key={k}>
                   <Label className="text-xs uppercase">{k}</Label>
                   <select
-                    className="mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
                     value={mapping.gst[k] ?? ""}
                     onChange={(e) =>
                       setGst({ [k]: e.target.value === "" ? null : Number(e.target.value) })
                     }
                   >
-                    <option value="">— none —</option>
+                    <option value="" className="bg-card text-muted-foreground">— none —</option>
                     {headers.map((h, i) => (
-                      <option key={i} value={i}>
+                      <option key={i} value={i} className="bg-card text-foreground">
                         {h || `Column ${i + 1}`}
                       </option>
                     ))}
@@ -497,7 +635,7 @@ export default function SheetWizard({
               <div>
                 <Label className="text-xs">Rate column</Label>
                 <select
-                  className="mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
                   value={mapping.gst.rateColumn ?? ""}
                   onChange={(e) =>
                     setGst({
@@ -505,9 +643,9 @@ export default function SheetWizard({
                     })
                   }
                 >
-                  <option value="">— use a flat rate —</option>
+                  <option value="" className="bg-card text-muted-foreground">— use a flat rate —</option>
                   {headers.map((h, i) => (
-                    <option key={i} value={i}>
+                    <option key={i} value={i} className="bg-card text-foreground">
                       {h || `Column ${i + 1}`}
                     </option>
                   ))}
@@ -558,13 +696,13 @@ export default function SheetWizard({
               <div key={key}>
                 <Label className="text-xs">{label}</Label>
                 <select
-                  className="mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
                   value={(mapping.ledgers[key] as string | null) ?? ""}
                   onChange={(e) => setLedger(key, e.target.value || null)}
                 >
-                  <option value="">— none —</option>
+                  <option value="" className="bg-card text-muted-foreground">— none —</option>
                   {ledgers.map((l) => (
-                    <option key={l.id} value={l.id}>
+                    <option key={l.id} value={l.id} className="bg-card text-foreground">
                       {l.name}
                     </option>
                   ))}

@@ -112,6 +112,29 @@ export async function previewMapping(
     })
   );
 }
+/**
+ * Fetch the staged rows for the editable data grid.
+ * Returns up to 100 rows from the server.
+ */
+export async function fetchRows(
+  uploadId: string
+): Promise<{ preview: CellValue[][]; rowsAvailable: boolean }> {
+  return asJson(await fetch(`/api/excel/uploads/${uploadId}`));
+}
+
+/** Persist cell edits back to the staged upload rows. */
+export async function updateRows(
+  uploadId: string,
+  edits: { row: number; cells: CellValue[] }[]
+): Promise<{ updated: number }> {
+  return asJson(
+    await fetch(`/api/excel/uploads/${uploadId}/rows`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ edits }),
+    })
+  );
+}
 
 /**
  * Commit, following the continuation the server hands back.

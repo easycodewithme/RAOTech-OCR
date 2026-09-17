@@ -11,6 +11,7 @@ import {
   hasBlockingPushIssues,
   preflightForPush,
 } from "@/lib/tally/syncJobs";
+import { hasDemoAccess } from "@/lib/demoAccess";
 import { readIds, requireStatement } from "../../../_shared";
 
 /**
@@ -45,6 +46,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     };
     const txnIds = readIds(body.txnIds);
     const wantsPush = body.push !== false;
+
+    if (wantsPush && !(await hasDemoAccess(userId))) {
+      return NextResponse.json(
+        { error: "Book a demo to unlock this feature", code: "DEMO_REQUIRED" },
+        { status: 403 }
+      );
+    }
 
     let result;
     try {

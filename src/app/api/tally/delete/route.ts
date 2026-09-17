@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getActiveClient } from "@/lib/clientContext";
 import { buildVoucherDeletePayload, enqueueJob } from "@/lib/tally/syncJobs";
+import { requireDemoAccess } from "@/lib/demoAccess";
 
 /**
  * POST /api/tally/delete
@@ -14,6 +15,8 @@ import { buildVoucherDeletePayload, enqueueJob } from "@/lib/tally/syncJobs";
  */
 export async function POST(req: Request) {
   try {
+    const access = await requireDemoAccess();
+    if (access.response) return access.response;
     const ctx = await getActiveClient();
     if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { user, client } = ctx;

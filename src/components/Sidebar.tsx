@@ -14,12 +14,13 @@ import {
   Scale,
   BarChart3,
   Kanban,
-  Link2,
+  Inbox,
   ClipboardList,
   Filter,
   Building2,
   PlugZap,
   Settings,
+  UserPlus,
 } from "lucide-react";
 import { SignOutButton } from "@clerk/nextjs";
 import { extraPagesEnabled } from "@/lib/featureFlags";
@@ -36,9 +37,10 @@ const routes = [
   { label: "Reports", icon: BarChart3, href: "/reports", localOnly: true },
   { label: "Ledgers & Rules", icon: BookOpen, href: "/settings", exact: true },
   { label: "Tally Connection", icon: PlugZap, href: "/settings/tally" },
-  { label: "Intake Links", icon: Link2, href: "/intake", localOnly: true },
+  { label: "Intake Documents", icon: Inbox, href: "/intake" },
   { label: "Tasks", icon: ClipboardList, href: "/tasks", localOnly: true },
-  { label: "AI Assistant", icon: MessageSquare, href: "/pricing" },
+  { label: "AI Assistant", icon: MessageSquare, href: "/chat" },
+  { label: "Invite Users", icon: UserPlus, href: "/invite-users" },
   { label: "Communication", icon: MessagesSquare, href: "/communication", localOnly: true },
 ];
 

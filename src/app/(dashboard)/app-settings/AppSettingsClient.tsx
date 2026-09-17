@@ -1,7 +1,6 @@
 "use client";
 
-import { ThemeToggle } from "@/components/ThemeToggle";
-import { User, Palette, Shield } from "lucide-react";
+import { User, Shield } from "lucide-react";
 
 interface AppSettingsClientProps {
   userName: string;
@@ -34,40 +33,6 @@ export function AppSettingsClient({
       <p style={{ fontSize: "13px", color: "var(--spx-muted)", marginBottom: "32px", letterSpacing: "0.3px" }}>
         Manage your account preferences and appearance.
       </p>
-
-      {/* ── Appearance Section ── */}
-      <div style={{ border: "1px solid var(--spx-border)", background: "var(--spx-card)", marginBottom: "24px" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            padding: "16px 20px",
-            borderBottom: "1px solid var(--spx-border)",
-          }}
-        >
-          <Palette style={{ width: "18px", height: "18px", color: "var(--spx-muted)" }} strokeWidth={1.5} />
-          <span
-            className="uppercase"
-            style={{ fontSize: "11px", letterSpacing: "1.5px", fontWeight: 600, color: "var(--spx-muted)" }}
-          >
-            Appearance
-          </span>
-        </div>
-        <div style={{ padding: "24px 20px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" }}>
-            <div>
-              <p style={{ fontSize: "15px", fontWeight: 600, color: "var(--spx-text)", marginBottom: "4px" }}>
-                Theme
-              </p>
-              <p style={{ fontSize: "13px", color: "var(--spx-muted)" }}>
-                Choose between dark and light mode for the interface.
-              </p>
-            </div>
-            <ThemeToggle />
-          </div>
-        </div>
-      </div>
 
       {/* ── Account Info Section ── */}
       <div style={{ border: "1px solid var(--spx-border)", background: "var(--spx-card)", marginBottom: "24px" }}>
