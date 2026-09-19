@@ -1363,7 +1363,7 @@ export default function LandingPage() {
         </section>
 
         {/* ── 4. Showcase Section (Sequential Cards with Sticky Pinned Tab Navigation) ── */}
-        <section id="platform" className="scroll-mt-14 border-b border-border bg-[#fafbfc] pt-8 sm:pt-10 pb-14 sm:pb-20">
+        <section id="platform" className="scroll-mt-14 border-b border-border bg-[#fafbfc] pt-8 sm:pt-10 pb-10 sm:pb-12">
           <div className="mx-auto max-w-6xl px-4 md:px-6">
             {/* Section Header */}
             <div className="text-center max-w-3xl mx-auto mb-6 sm:mb-8">
@@ -1418,7 +1418,9 @@ export default function LandingPage() {
                     style={{
                       zIndex: 10 + idx,
                     }}
-                    className="relative lg:sticky lg:top-[126px] w-full mb-8 sm:mb-12 lg:mb-[32vh]"
+                    className={`relative lg:sticky lg:top-[126px] w-full ${
+                      isLast ? "mb-0" : "mb-8 sm:mb-12 lg:mb-[24vh]"
+                    }`}
                   >
                     <div
                       ref={cardInnerRefs[idx]}
@@ -1489,15 +1491,12 @@ export default function LandingPage() {
                   </div>
                 );
               })}
-
-              {/* Dwell spacer: Shown only on desktop where stacking cards pin */}
-              <div className="hidden lg:block h-[16vh] sm:h-[20vh] w-full pointer-events-none" aria-hidden="true" />
             </div>
           </div>
         </section>
 
         {/* ── 3. Problem vs. Solution Framework (PRD Section 03) ── */}
-        <section id="problem-solution" className="scroll-mt-14 border-b border-border bg-white py-12 sm:py-24">
+        <section id="problem-solution" className="scroll-mt-14 border-b border-border bg-white pt-10 sm:pt-14 pb-12 sm:pb-20">
           <div className="mx-auto max-w-6xl px-4 md:px-6">
             <div className="text-center max-w-3xl mx-auto">
               <span className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground font-semibold">
