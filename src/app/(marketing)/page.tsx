@@ -1950,15 +1950,9 @@ export default function LandingPage() {
         </div>
 
         <div className="border-t border-border px-4 py-4 md:px-6">
-          <div className="mx-auto flex max-w-6xl flex-col sm:flex-row items-center justify-between text-xs text-muted-foreground gap-2 text-center sm:text-left">
-            <p>© {new Date().getFullYear()} RAO AI. All rights reserved.</p>
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1.5 text-emerald-600">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                All Systems Operational
-              </span>
-            </div>
-          </div>
+          <p className="mx-auto max-w-6xl text-xs text-muted-foreground">
+            © {new Date().getFullYear()} RAO AI. All rights reserved.
+          </p>
         </div>
       </footer>
     </div>
