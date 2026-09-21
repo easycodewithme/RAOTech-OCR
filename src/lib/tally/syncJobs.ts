@@ -305,6 +305,13 @@ export async function buildVoucherPushPayload(
               credit: l.credit,
               hsnCode: l.hsnCode,
               gstRate: l.gstRate,
+              // The allocation the builder decided, in Tally's own vocabulary.
+              // Without these two the emitter falls back to its old guess —
+              // New Ref on every party line — which opens a fresh reference for
+              // a credit note or a payment instead of settling the bill it was
+              // meant to settle.
+              billRefType: l.billRefType,
+              billRefName: l.billRefName,
               // Present only on lines that move stock; `exportXml` switches
               // those to an inventory entry with the ledger nested inside.
               stockItemName: l.stockItemName,
@@ -321,35 +328,115 @@ export async function buildVoucherPushPayload(
   // The sync row is created before the job is handed out, so a voucher shows
   // "queued" the moment the user clicks push rather than only once a connector
   // happens to pick the work up.
-  const now = new Date();
-  for (const v of vouchers) {
-    await db.voucherSync.upsert({
-      where: {
-        voucherId_tallyCompanyId: {
-          voucherId: v.id,
-          tallyCompanyId: input.tallyCompanyId,
-        },
-      },
-      create: {
-        voucherId: v.id,
-        tallyCompanyId: input.tallyCompanyId,
-        remoteId: remoteIdFor(v.id),
-        state: "QUEUED",
-        lastAttemptAt: now,
-      },
-      update: {
-        // Rewritten, not left alone: a row carrying anything other than
-        // `RAO-<uuid>` would name a voucher Tally does not hold, and a delete
-        // against it would silently miss.
-        remoteId: remoteIdFor(v.id),
-        state: "QUEUED",
-        error: null,
-        lastAttemptAt: now,
-      },
-    });
-  }
+  await queueVoucherSyncRows(
+    db,
+    input.tallyCompanyId,
+    vouchers.map((v) => v.id)
+  );
 
   return payload;
+}
+
+/**
+ * Mark a batch of vouchers "queued for Tally", in a bounded number of round
+ * trips rather than one per voucher.
+ *
+ * This used to be an `await db.voucherSync.upsert(...)` inside a `for` loop.
+ * Prisma has no bulk upsert, so that was the obvious way to write it and the
+ * wrong way to run it: round trips are the dominant cost in this app (the
+ * pooler is in ap-northeast-2, measured at ~160-290ms each — see
+ * `src/lib/prisma.ts`), so a month-end push of 900 vouchers spent something
+ * like three minutes here, inside one HTTP request, before a single job was
+ * queued. The request died first, and the user got a 500 for work that had
+ * partially happened.
+ *
+ * Three statements now, whatever the batch size:
+ *
+ *  1. `createMany` with `skipDuplicates` — inserts the rows that do not exist
+ *     yet and steps over the ones that do, because the unique key is
+ *     (voucherId, tallyCompanyId).
+ *  2. `updateMany` — resets state, clears the previous attempt's error and
+ *     stamps `lastAttemptAt` for every row in the batch, new or old.
+ *  3. A read of the remote ids, and a repair write only for rows whose id is
+ *     not the canonical `RAO-<uuid>`.
+ *
+ * Step 3 exists because `remoteId` is the one field whose value differs per
+ * row, so no `updateMany` can set it, and it is not cosmetic: a row carrying
+ * anything else names a voucher Tally does not hold, and a delete against it
+ * would silently miss. It normally writes nothing at all — `remoteIdFor` is
+ * deterministic, so a row written by this function already agrees — which is
+ * exactly why it is worth the one extra read to catch the rows that do not.
+ */
+async function queueVoucherSyncRows(
+  db: PrismaClient,
+  tallyCompanyId: string,
+  voucherIds: string[]
+): Promise<void> {
+  if (!voucherIds.length) return;
+  const now = new Date();
+
+  const rows: Prisma.VoucherSyncCreateManyInput[] = voucherIds.map((id) => ({
+    voucherId: id,
+    tallyCompanyId,
+    remoteId: remoteIdFor(id),
+    state: "QUEUED",
+    lastAttemptAt: now,
+  }));
+
+  await db.voucherSync.createMany({ data: rows, skipDuplicates: true });
+
+  await db.voucherSync.updateMany({
+    where: { voucherId: { in: voucherIds }, tallyCompanyId },
+    data: { state: "QUEUED", error: null, lastAttemptAt: now },
+  });
+
+  const existing = await db.voucherSync.findMany({
+    where: { voucherId: { in: voucherIds }, tallyCompanyId },
+    select: { id: true, voucherId: true, remoteId: true },
+  });
+
+  for (const row of existing) {
+    const expected = remoteIdFor(row.voucherId);
+    if (row.remoteId === expected) continue;
+    await db.voucherSync.update({ where: { id: row.id }, data: { remoteId: expected } });
+  }
+}
+
+/**
+ * How many vouchers go into one VOUCHER_PUSH job.
+ *
+ * The number is set by what the payload has to survive, not by what Tally can
+ * take. One voucher is one full `<ENVELOPE>` — the connector needs one envelope
+ * per voucher to get a per-voucher answer at all (see above) — and that XML is
+ * carried three times over: written into one JSONB `SyncJob.payload` column,
+ * returned whole in the single JSON response of `GET /api/connector/jobs`, and
+ * held in memory while the route builds it. Measured against the envelopes this
+ * codebase actually emits, a plain GST purchase runs ~1.5-2.5 KB and an
+ * inventory voucher with a dozen stock lines ~8-10 KB.
+ *
+ * At 100 vouchers that is ~200 KB for a typical batch and ~1 MB for the worst
+ * shape of batch we produce — comfortably inside a serverless response budget
+ * even after JSON escaping, with room for the payload to grow a field or two.
+ * At 900, the size the uncapped route would have built, the worst case is ~9 MB
+ * and the response cannot be sent at all.
+ *
+ * Two smaller reasons for the same number. It bounds the blast radius of a job
+ * that dies mid-batch: at most 100 vouchers land in the unknown state
+ * `applyVoucherResults` records, and a re-push re-sends at most 100. And it
+ * keeps one job to roughly a minute of Tally round trips, which is short enough
+ * that the desktop connector's progress means something to the person watching.
+ *
+ * It is not a limit on how much can be pushed at once — the rest goes into
+ * further jobs on the same queue, which the connector drains in order.
+ */
+export const VOUCHERS_PER_JOB = 100;
+
+/** Split a list into consecutive runs of at most `size`, preserving order. */
+export function chunk<T>(items: T[], size: number): T[][] {
+  if (size < 1) throw new Error("chunk size must be at least 1");
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
 }
 
 export async function buildVoucherDeletePayload(
@@ -484,6 +571,15 @@ export interface ApplyJobResultOutcome {
   state: "DONE" | "FAILED";
   posted?: number;
   failed?: number;
+  /**
+   * Vouchers this result establishes nothing about, either way.
+   *
+   * Not a third flavour of failure: it is the honest count of vouchers that may
+   * or may not be in the client's books right now. See `applyVoucherResults` —
+   * a job that dies with no per-voucher results cannot tell us which vouchers
+   * Tally had already accepted before it died.
+   */
+  unknown?: number;
 }
 
 type JobRow = Pick<
@@ -526,10 +622,69 @@ export async function applyJobResult(
       where: { id: job.id },
       select: { state: true },
     });
+
+    /**
+     * One replay is worth re-running, and only one: a MASTER_PULL whose effect
+     * never finished.
+     *
+     * The guarded transition above is deliberately pessimistic — it assumes the
+     * effect ran, because for a voucher push re-running it could walk a row
+     * backwards out of POSTED. A master pull is the opposite: it is idempotent
+     * by construction (a ledger is matched on Tally's GUID, so re-applying the
+     * same chart adopts exactly the same rows a second time and changes
+     * nothing). And it is the one effect long enough to be cut off half-done —
+     * see `applyMasterPull`, which writes a whole chart of accounts.
+     *
+     * The failure this rescues is real and unrecoverable without it: the job is
+     * marked DONE *before* the effect runs, so a pull that dies mid-write left
+     * the job terminal, the ledgers half-written and the company stuck at
+     * SYNCING for ever. The connector's retry then hit this branch, got
+     * `applied: false`, and the pull could never finish. Re-running when the
+     * company never reached READY is what makes that converge instead.
+     */
+    if (
+      job.kind === "MASTER_PULL" &&
+      current?.state === "DONE" &&
+      jobOk &&
+      job.tallyCompanyId
+    ) {
+      const company = await db.tallyCompany.findUnique({
+        where: { id: job.tallyCompanyId },
+        select: { status: true },
+      });
+      if (company && company.status !== "READY") {
+        await applyMasterPullResult(db, job, body, true);
+        return { applied: true, state: "DONE" };
+      }
+    }
+
     return {
       applied: false,
       state: current?.state === "DONE" ? "DONE" : "FAILED",
     };
+  }
+
+  /**
+   * A job that did not really succeed must take its dependents with it.
+   *
+   * `claimJob` will not hand out a job whose `dependsOnJobId` is not DONE, which
+   * is what stops a failed MASTER_CREATE from being followed by a push in which
+   * every voucher fails `Ledger 'X' does not exist!`. But that guard alone only
+   * defers the dependent — a master that never reaches DONE would leave its push
+   * QUEUED for ever, unclaimable and silent, which is a worse failure than the
+   * one it prevents.
+   *
+   * "Did not really succeed" is deliberately stricter than the job's own state.
+   * A MASTER_CREATE reports `ok: true` while Tally answers `exceptions: 1`, so
+   * the counters decide, exactly as they do for vouchers — this is the same trap
+   * `isTallySuccess` exists for.
+   */
+  const reallyFailed =
+    state === "FAILED" ||
+    (job.kind === "MASTER_CREATE" && !isTallySuccess(body.tally));
+
+  if (reallyFailed) {
+    await failDependentJobs(db, job, transportError);
   }
 
   switch (job.kind) {
@@ -552,6 +707,81 @@ export async function applyJobResult(
   }
 
   return { applied: true, state };
+}
+
+/**
+ * Fail everything that was waiting on a job that did not succeed.
+ *
+ * Only QUEUED dependents are touched: one already CLAIMED is out with a
+ * connector and will report its own result, and re-deciding its fate here would
+ * race that report.
+ *
+ * The `VoucherSync` rows are failed alongside the job, because they are written
+ * as QUEUED the moment the user clicks push — before any connector sees the
+ * work — so failing only the job would leave every voucher in the batch showing
+ * "queued" for ever, waiting on a job that will never be handed out.
+ *
+ * The message names the upstream cause rather than restating the symptom. A
+ * user reading "Ledger 'X' does not exist" on forty vouchers learns nothing
+ * about the one master create that actually went wrong.
+ */
+async function failDependentJobs(
+  db: PrismaClient,
+  job: JobRow,
+  transportError: string | null
+) {
+  const dependents = await db.syncJob.findMany({
+    where: {
+      userId: job.userId,
+      state: "QUEUED",
+      payload: { path: ["dependsOnJobId"], equals: job.id },
+    },
+    select: { id: true, kind: true, payload: true, tallyCompanyId: true },
+  });
+
+  if (!dependents.length) return;
+
+  const reason =
+    job.kind === "MASTER_CREATE"
+      ? `Not sent: the ledgers and stock items this batch needs could not be created in Tally first.${
+          transportError ? ` ${transportError}` : ""
+        } Fix that, then push again — nothing from this batch reached the books.`
+      : `Not sent: the job this batch depended on did not complete.${
+          transportError ? ` ${transportError}` : ""
+        }`;
+
+  const now = new Date();
+  const ids = dependents.map((d) => d.id);
+
+  await db.syncJob.updateMany({
+    where: { id: { in: ids }, state: "QUEUED" },
+    data: { state: "FAILED", error: reason, finishedAt: now },
+  });
+
+  /**
+   * The sync rows are found through the payload, not through `jobId`.
+   *
+   * `buildVoucherPushPayload` writes them as QUEUED before the job is handed
+   * out, and `jobId` is stamped only when a result comes back — which for these
+   * rows never happens. Reading the voucher ids out of the payload is the only
+   * link that exists at this point.
+   */
+  for (const dep of dependents) {
+    const payload = (dep.payload ?? {}) as { vouchers?: { voucherId?: string }[] };
+    const voucherIds = (payload.vouchers ?? [])
+      .map((v) => v.voucherId)
+      .filter((id): id is string => !!id);
+    if (!voucherIds.length) continue;
+
+    await db.voucherSync.updateMany({
+      where: {
+        voucherId: { in: voucherIds },
+        ...(dep.tallyCompanyId ? { tallyCompanyId: dep.tallyCompanyId } : {}),
+        state: { in: ["QUEUED", "SENDING"] },
+      },
+      data: { state: "FAILED", error: reason, jobId: dep.id, lastAttemptAt: now },
+    });
+  }
 }
 
 async function applyPingResult(
@@ -650,12 +880,34 @@ async function applyMasterCreateResult(
   });
 }
 
+/**
+ * What we tell the user about a voucher whose outcome nobody can establish.
+ *
+ * Every word here is doing a job. The user is looking at a batch that has just
+ * stopped, and the single most damaging thing they can do next — the natural,
+ * conscientious thing — is open Tally and key the "missing" entries in by hand.
+ * That produces vouchers with no REMOTEID, which we can neither see nor ever
+ * de-duplicate: a permanent double entry in a client's live books, found months
+ * later by a CA reconciling a ledger. Re-pushing is the opposite: every voucher
+ * carries the same `RAO-<uuid>` REMOTEID, so Tally ALTERs the ones that already
+ * landed instead of adding a second copy.
+ */
+export function unknownOutcomeReason(
+  transportError: string | null,
+  deleting = false
+): string {
+  const cause = transportError?.trim() ? ` ${transportError.trim()}` : "";
+  return deleting
+    ? `This delete ended before Tally reported on this voucher, so we do not know whether it was removed.${cause} Do not delete it inside Tally by hand — run the delete again from here instead. A delete of a voucher Tally no longer holds is treated as success, so re-running is safe either way.`
+    : `This push ended before Tally reported on this voucher, so we do not know whether it was posted. It may already be in the books.${cause} Do not key it into Tally by hand — that would create a duplicate nothing here can see. Push again instead: the voucher keeps the same id in Tally, so a re-push alters the copy that already landed rather than creating a second one.`;
+}
+
 async function applyVoucherResults(
   db: PrismaClient,
   job: JobRow,
   body: JobResultBody,
   transportError: string | null
-): Promise<{ posted: number; failed: number }> {
+): Promise<{ posted: number; failed: number; unknown?: number }> {
   const payload = (job.payload ?? {}) as {
     vouchers?: { voucherId: string }[];
   };
@@ -663,12 +915,75 @@ async function applyVoucherResults(
   const entries = body.results ?? [];
   const byId = new Map(entries.map((e) => [e.voucherId, e]));
 
-  // A job that never reached Tally reports no per-voucher results at all. Every
-  // voucher it carried has to be failed explicitly, or it sits at SENDING for
-  // ever and the UI spins on a job that is already dead.
   const voucherIds = sent.length ? sent : entries.map((e) => e.voucherId);
   const deleting = job.kind === "VOUCHER_DELETE";
   const now = new Date();
+
+  /**
+   * A job that carried vouchers and came back with no per-voucher results at
+   * all tells us nothing about any single voucher — so we must not claim it
+   * does.
+   *
+   * This is SYNC-06. `runner.go` returns exactly this shape when Tally becomes
+   * unreachable partway through a batch, or when the connector is shut down
+   * mid-loop: a job-level error and a deliberately absent `results` array,
+   * because a *partial* array would leave the vouchers missing from it with no
+   * signal at all. The vouchers before that point were already accepted by
+   * Tally and are in the client's live books.
+   *
+   * This code used to read `sent` = every voucher, `entries` = empty, and write
+   * FAILED for all of them. On a 200-voucher batch that told a CA that 200
+   * vouchers were rejected when perhaps 140 were posted — and the honest human
+   * response to that screen is to re-key 140 entries by hand, which is the one
+   * action that causes permanent, invisible duplicates. Asserting a rejection
+   * we cannot know is worse than admitting we do not know.
+   *
+   * Of the two ways to record "unknown", this takes the second:
+   *
+   *   (a) add UNKNOWN to `VoucherSyncState`. Truthful in the database, but the
+   *       value would arrive in a UI that has no case for it: `TallySyncBadge`
+   *       falls back to `TONE.QUEUED`, so the row would read "Queued — waiting
+   *       for the connector to pick it up", which is a *different* lie, and the
+   *       error text below would never be shown because only FAILED opens the
+   *       reason dialog. It also costs an enum migration on a database shared
+   *       with an unrelated project, for a value nothing can render yet.
+   *
+   *   (b) leave the row SENDING and record the reason. SENDING already means
+   *       exactly this — "a device took the job and we do not know what
+   *       happened next" — and the reporting for it already exists and was
+   *       built for precisely this case: `dashboardStats.syncStuckCount` counts
+   *       SENDING rows whose `lastAttemptAt` is over ten minutes old, and the
+   *       transactions table has a "stuck" filter on the same rule. Stamping
+   *       `lastAttemptAt = now` starts that ten-minute clock from this failure
+   *       rather than from the claim, which is what makes the row surface as
+   *       stuck instead of as a push still in flight.
+   *
+   * Note what does *not* rescue these rows, despite two comments in the Go
+   * connector saying it does (`runner.go:268-270`, and again at
+   * `runner.go:485-491`): the claim timeout. `requeueStuckJobs` in
+   * `src/app/api/connector/jobs/route.ts` only moves rows in state CLAIMED back
+   * to QUEUED, and by the time we are in this function the job has just been
+   * written FAILED — a terminal state the reaper never looks at. The reaper
+   * genuinely does re-queue the *other* failure the Go comment describes, where
+   * the result POST itself never lands and the job is left CLAIMED. The path
+   * that produces this branch is not that one. Nothing re-drives it
+   * automatically; a human pushes again, which is what the message asks for.
+   */
+  if (sent.length && entries.length === 0) {
+    const reason = unknownOutcomeReason(transportError, deleting);
+    await db.voucherSync.updateMany({
+      where: {
+        voucherId: { in: sent },
+        ...(job.tallyCompanyId ? { tallyCompanyId: job.tallyCompanyId } : {}),
+        // POSTED and DELETED rows are left exactly as they are: those outcomes
+        // were established by an earlier job that did report per voucher, and
+        // this job's silence is not evidence against them.
+        state: { in: ["QUEUED", "SENDING"] },
+      },
+      data: { state: "SENDING", error: reason, jobId: job.id, lastAttemptAt: now },
+    });
+    return { posted: 0, failed: 0, unknown: sent.length };
+  }
 
   /**
    * Which of these vouchers move stock — looked up only if it turns out to

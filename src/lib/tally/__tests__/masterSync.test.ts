@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
+import type { PrismaClient } from "@prisma/client";
 import {
+  applyMasterPull,
   deriveCompanyPeriod,
   indianFinancialYear,
   ledgerKey,
@@ -322,5 +324,253 @@ describe("planLedgerReconciliation", () => {
     expect(plan.entries).toHaveLength(SEED_LEDGERS.length);
     expect(plan.entries.every((e) => e.existingId !== null)).toBe(true);
     expect(plan.skipped).toHaveLength(0);
+  });
+});
+
+/**
+ * `applyMasterPull` against a fake that behaves like the table does.
+ *
+ * The pure planner above decides *what* happens to each ledger; these prove the
+ * writing of it, which is where SYNC-07 lived: a real chart is 1,000-2,000
+ * ledgers and the first version wrote them one row at a time inside the
+ * connector's result request. At the round-trip cost this codebase documents
+ * (~160-290ms to the pooler) that request could not finish, and what it left
+ * behind — half a chart, a job already marked terminal, a company stuck at
+ * SYNCING — could never be retried.
+ */
+interface FakeLedger {
+  id: string;
+  userId: string;
+  clientId: string;
+  name: string;
+  group: string;
+  ledgerType: string;
+  isSeeded: boolean;
+  tallyCompanyId: string | null;
+  tallyGuid: string | null;
+  tallyName: string | null;
+  tallyParent: string | null;
+  tallyReserved: boolean;
+  tallySyncedAt: Date | null;
+}
+
+function makeLedgerDb(initial: Partial<FakeLedger>[] = []) {
+  const table = new Map<string, FakeLedger>();
+  for (const [i, row] of initial.entries()) {
+    const id = row.id ?? `seed-${i}`;
+    table.set(id, {
+      userId: "u1",
+      clientId: "c1",
+      name: `Ledger ${i}`,
+      group: "CURRENT_ASSETS",
+      ledgerType: "OTHER",
+      isSeeded: true,
+      tallyCompanyId: null,
+      tallyGuid: null,
+      tallyName: null,
+      tallyParent: null,
+      tallyReserved: false,
+      tallySyncedAt: null,
+      ...row,
+      id,
+    } as FakeLedger);
+  }
+
+  const calls = { findMany: 0, createMany: 0, updateMany: 0, update: 0, transaction: 0 };
+  const companyWrites: Record<string, unknown>[] = [];
+  /** Set to fail the Nth `createMany`, standing in for a killed request. */
+  const opts = { failCreateManyOnCall: 0 };
+  let nextId = 0;
+
+  const db = {
+    ledger: {
+      findMany: async () => {
+        calls.findMany += 1;
+        return [...table.values()].map((r) => ({ ...r }));
+      },
+      createMany: async ({
+        data,
+        skipDuplicates,
+      }: {
+        data: Omit<FakeLedger, "id">[];
+        skipDuplicates?: boolean;
+      }) => {
+        calls.createMany += 1;
+        if (opts.failCreateManyOnCall === calls.createMany) {
+          throw new Error("the request was killed part-way through");
+        }
+        let count = 0;
+        for (const row of data) {
+          // Stands in for @@unique([userId, clientId, name]).
+          const clash = [...table.values()].some((r) => r.name === row.name);
+          if (clash && skipDuplicates) continue;
+          if (clash) throw new Error(`duplicate ledger name ${row.name}`);
+          nextId += 1;
+          const id = `new-${nextId}`;
+          table.set(id, { ...(row as FakeLedger), id });
+          count += 1;
+        }
+        return { count };
+      },
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: { in: string[] } };
+        data: Partial<FakeLedger>;
+      }) => {
+        calls.updateMany += 1;
+        let count = 0;
+        for (const id of where.id.in) {
+          const row = table.get(id);
+          if (!row) continue;
+          Object.assign(row, data);
+          count += 1;
+        }
+        return { count };
+      },
+      update: async ({ where, data }: { where: { id: string }; data: Partial<FakeLedger> }) => {
+        calls.update += 1;
+        const row = table.get(where.id);
+        if (!row) throw new Error(`no ledger ${where.id}`);
+        Object.assign(row, data);
+        return { ...row };
+      },
+    },
+    tallyCompany: {
+      update: async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        companyWrites.push(args.data);
+        return args.data;
+      },
+    },
+    $transaction: async (ops: Promise<unknown>[]) => {
+      calls.transaction += 1;
+      return Promise.all(ops);
+    },
+  };
+
+  const reset = () => {
+    calls.findMany = 0;
+    calls.createMany = 0;
+    calls.updateMany = 0;
+    calls.update = 0;
+    calls.transaction = 0;
+  };
+
+  return { db: db as unknown as PrismaClient, table, calls, companyWrites, opts, reset };
+}
+
+const pull = (ledgers: TallyLedgerRecord[]) => ({
+  userId: "u1",
+  clientId: "c1",
+  tallyCompanyId: "tc1",
+  companyName: "RAOTECH",
+  companies: [{ name: "RAOTECH", booksFrom: "20260401" }],
+  ledgers,
+});
+
+/** A chart the size of a real client's. */
+const bigChart = (n: number): TallyLedgerRecord[] =>
+  Array.from({ length: n }, (_, i) => ({
+    name: `Ledger ${i}`,
+    parent: "Sundry Creditors",
+    guid: `guid-${i}`,
+    reserved: false,
+  }));
+
+describe("applyMasterPull", () => {
+  it("adopts a seeded ledger rather than inserting a second row", async () => {
+    // The semantic the whole module exists for, asserted end to end this time:
+    // Tally's spelling differs in case, and the row must keep its id — its
+    // mappings and rule targets hang off it — and merely gain a GUID.
+    const fake = makeLedgerDb([{ id: "seed-cash", name: "Cash", isSeeded: true }]);
+
+    const outcome = await applyMasterPull(
+      fake.db,
+      pull([{ name: "CASH", parent: "Cash-in-Hand", guid: "guid-cash", reserved: true }])
+    );
+
+    expect(outcome.adopted).toBe(1);
+    expect(outcome.created).toBe(0);
+    expect(fake.table.size).toBe(1);
+
+    const row = fake.table.get("seed-cash");
+    expect(row?.tallyGuid).toBe("guid-cash");
+    expect(row?.tallyName).toBe("CASH");
+    expect(row?.tallyReserved).toBe(true);
+    // The local name is untouched: it is what every mapping and every voucher
+    // line snapshot already says.
+    expect(row?.name).toBe("Cash");
+  });
+
+  it("writes a two-thousand ledger chart in a handful of round trips", async () => {
+    const fake = makeLedgerDb();
+
+    const outcome = await applyMasterPull(fake.db, pull(bigChart(2000)));
+
+    expect(outcome.created).toBe(2000);
+    expect(fake.table.size).toBe(2000);
+
+    // The point of the change. One read, ten chunked inserts, one company
+    // write — not two thousand statements, which at ~160-290ms each could not
+    // have completed inside the request at all.
+    const statements =
+      fake.calls.findMany +
+      fake.calls.createMany +
+      fake.calls.updateMany +
+      fake.calls.transaction;
+    expect(statements).toBeLessThan(20);
+    expect(fake.calls.update).toBe(0);
+  });
+
+  it("costs almost nothing to pull the same chart again", async () => {
+    // The converged case, and therefore the case every resumed pull ends in.
+    const fake = makeLedgerDb();
+    const chart = bigChart(500);
+    await applyMasterPull(fake.db, pull(chart));
+    fake.reset();
+
+    await applyMasterPull(fake.db, pull(chart));
+
+    // Nothing changed, so nothing is written per row: the adoptions collapse
+    // into one `updateMany` a chunk that only re-stamps `tallySyncedAt`.
+    expect(fake.calls.update).toBe(0);
+    expect(fake.calls.transaction).toBe(0);
+    expect(fake.calls.updateMany).toBeLessThan(5);
+    expect(fake.table.size).toBe(500);
+  });
+
+  it("converges from a pull that was killed part-way through", async () => {
+    const fake = makeLedgerDb();
+    const chart = bigChart(500);
+
+    // Chunk one commits, chunk two dies with the request.
+    fake.opts.failCreateManyOnCall = 2;
+    await expect(applyMasterPull(fake.db, pull(chart))).rejects.toThrow(/killed/);
+
+    // What is left behind is not garbage: it is 200 ledgers carrying their
+    // GUIDs, which is what the next pull matches on.
+    expect(fake.table.size).toBe(200);
+    expect(fake.companyWrites).toHaveLength(0);
+
+    fake.opts.failCreateManyOnCall = 0;
+    const outcome = await applyMasterPull(fake.db, pull(chart));
+
+    // The retry finishes the job and duplicates nothing.
+    expect(fake.table.size).toBe(500);
+    expect(outcome.created).toBe(300);
+    expect(outcome.adopted).toBe(200);
+    expect(fake.companyWrites.at(-1)?.status).toBe("READY");
+  });
+
+  it("only reports READY once the whole chart is in", async () => {
+    const fake = makeLedgerDb();
+    fake.opts.failCreateManyOnCall = 1;
+
+    await expect(applyMasterPull(fake.db, pull(bigChart(10)))).rejects.toThrow();
+
+    // A company left at SYNCING is what `applyJobResult` looks for when a
+    // replayed result arrives, and is why the pull can be re-driven at all.
+    expect(fake.companyWrites).toHaveLength(0);
   });
 });

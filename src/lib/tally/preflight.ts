@@ -56,8 +56,29 @@ export interface PreflightOptions {
   bookEnding?: Date;
 }
 
-/** Amounts are floats; treat anything under half a paisa as zero. */
-const EPSILON = 0.005;
+/**
+ * Amounts are floats; treat anything under half a paisa as zero.
+ *
+ * Exported because approval and pre-flight have to be the *same* number, and
+ * they were not: the three approve routes used to allow ₹0.01 of drift while
+ * this file rejected anything over ₹0.005. A voucher out by ₹0.008 therefore
+ * approved happily and then failed pre-flight forever after — it cannot be
+ * edited (PATCH requires DRAFT) and nothing un-approves it, so it sat in the
+ * client's queue permanently unpushable.
+ *
+ * The stricter of the two wins by construction: nothing may become APPROVED
+ * that this file will later refuse to export. If this ever needs to loosen,
+ * loosen it here and only here — every approve route imports this constant, so
+ * the two sides cannot drift apart again.
+ */
+export const BALANCE_EPSILON = 0.005;
+
+/**
+ * In-file alias. `src/lib/excel/validate.ts` documents its own AMOUNT_EPSILON
+ * as "the same constant and same reasoning as `EPSILON` in
+ * `src/lib/tally/preflight.ts`", so the name that reference points at stays.
+ */
+const EPSILON = BALANCE_EPSILON;
 
 function checkName(
   voucherId: string,

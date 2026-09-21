@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
+  BALANCE_EPSILON,
   preflightVouchers,
   hasBlockingIssues,
   groupByVoucher,
@@ -160,5 +162,62 @@ describe("preflight — reporting", () => {
     const grouped = groupByVoucher(preflightVouchers([voucher(), bad]));
     expect(grouped.has("v1")).toBe(false);
     expect(grouped.get("v-bad")!.length).toBeGreaterThan(0);
+  });
+});
+
+describe("preflight — the balance tolerance approval has to share", () => {
+  it("is half a paisa", () => {
+    expect(BALANCE_EPSILON).toBe(0.005);
+  });
+
+  /**
+   * The gap that stranded vouchers: the approve routes allowed ₹0.01 of drift
+   * while this file rejects anything over ₹0.005. Everything in between
+   * approved and then failed pre-flight forever — PATCH requires DRAFT and no
+   * route un-approves, so there was no way back.
+   */
+  it("rejects the drift approval used to let through", () => {
+    const v = voucher({
+      lines: [
+        { ledgerName: "Purchase - GST 18%", debit: 1000.008, credit: 0 },
+        { ledgerName: "Acme Pvt Ltd", debit: 0, credit: 1000 },
+      ],
+    });
+    expect(codes([v])).toContain("UNBALANCED");
+  });
+
+  it("accepts drift at the tolerance itself", () => {
+    const v = voucher({
+      lines: [
+        { ledgerName: "Purchase - GST 18%", debit: 1000.005, credit: 0 },
+        { ledgerName: "Acme Pvt Ltd", debit: 0, credit: 1000 },
+      ],
+    });
+    expect(codes([v])).not.toContain("UNBALANCED");
+  });
+
+  /**
+   * A source-level guard, deliberately.
+   *
+   * The routes themselves sit behind a Clerk session a test cannot forge, so
+   * the only thing that can hold approval and pre-flight to one number is a
+   * check that they still read it from the same place. A literal creeping back
+   * into any of the three is exactly how this defect happened the first time.
+   */
+  it("is the only tolerance the three approve routes compare against", () => {
+    const routes = [
+      "../../../app/api/vouchers/[voucherId]/approve/route.ts",
+      "../../../app/api/vouchers/bulk-approve/route.ts",
+      "../../../app/api/vouchers/auto-approve-high/route.ts",
+    ];
+    for (const rel of routes) {
+      const src = readFileSync(new URL(rel, import.meta.url), "utf8");
+      expect(src, `${rel} must import the shared tolerance`).toContain(
+        'BALANCE_EPSILON } from "@/lib/tally/preflight"'
+      );
+      expect(src, `${rel} compares the balance against a literal`).not.toMatch(
+        /totalCredit\)\s*>\s*[\d.]/
+      );
+    }
   });
 });

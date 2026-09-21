@@ -51,17 +51,36 @@ export async function createDraftVoucherForInvoice(
       igstLedgerId?: string | null;
       roundOffLedgerId?: string | null;
       discountLedgerId?: string | null;
+      /**
+       * Compensation cess. Listed last because it was missing longest: the
+       * wizard *requires* the user to nominate one whenever the sheet has a
+       * cess column (`excel/validate.ts`), and it was then dropped here — so
+       * the cess line was built with no ledger at all, which is the precise
+       * `Ledger 'Unknown' does not exist!` this block exists to prevent.
+       */
+      cessLedgerId?: string | null;
     };
   } = {}
 ) {
+  // Scoped to the workspace the caller named, not just to the firm. `invoiceId`
+  // reaches here straight off a request body on every API path, so a lookup by
+  // user alone found any invoice in the firm and then let `opts.clientId` win
+  // below: a voucher built from client A's invoice but stamped client B and
+  // resolved against B's chart of accounts — and where A's invoice already had a
+  // DRAFT voucher, the in-place rebuild at the bottom of this function deleted
+  // its lines and rewrote them. A client mismatch has to be a miss; falling back
+  // to the invoice's own client would only move the confusion one line down.
   const invoice = await prisma.invoice.findFirst({
-    where: { id: invoiceId, userId },
+    where: { id: invoiceId, userId, ...(opts.clientId ? { clientId: opts.clientId } : {}) },
     include: { voucher: true },
   });
   if (!invoice) throw new Error("Invoice not found");
 
   if (invoice.voucher && invoice.voucher.status !== "DRAFT") {
-    return invoice.voucher;
+    // Nothing was rebuilt, so there is nothing to warn about — but the shape
+    // has to match the built path, or callers reading `warnings` would have to
+    // narrow a union that differs only in a field one branch happens to omit.
+    return Object.assign(invoice.voucher, { warnings: [] as string[] });
   }
 
   const clientId = opts.clientId || invoice.clientId;
@@ -70,7 +89,22 @@ export async function createDraftVoucherForInvoice(
   await seedLedgersForUser(prisma, userId, clientId);
 
   const extracted = (invoice.extractedData as Record<string, unknown>) ?? {};
-  const inv = opts.normalized ?? normalizeInvoice(extracted);
+  /**
+   * The document a credit or debit note reverses lives on the `Invoice` row —
+   * set by OCR, by a sheet column, or by hand on the review screen — and
+   * neither branch below would otherwise see it: `opts.normalized` comes from a
+   * spreadsheet that has no such concept, and `normalizeInvoice` reads
+   * `extractedData`, which is empty for a sheet row. Merging it here is what
+   * lets `buildVoucher` emit `Agst Ref` against the original instead of opening
+   * a second outstanding beside it.
+   */
+  const inv: NormalizedInvoice = {
+    ...(opts.normalized ?? normalizeInvoice(extracted)),
+    ...(invoice.againstInvoiceNumber
+      ? { againstInvoiceNumber: invoice.againstInvoiceNumber }
+      : {}),
+    ...(invoice.againstInvoiceDate ? { againstInvoiceDate: invoice.againstInvoiceDate } : {}),
+  };
   const voucherType =
     opts.voucherTypeOverride ?? classifyVoucher(inv, invoice.documentType);
 
@@ -101,6 +135,7 @@ export async function createDraftVoucherForInvoice(
       overrides.igstLedgerId,
       overrides.roundOffLedgerId,
       overrides.discountLedgerId,
+      overrides.cessLedgerId,
     ].filter((id): id is string => !!id);
 
     if (wanted.length) {
@@ -111,8 +146,18 @@ export async function createDraftVoucherForInvoice(
       const byId = new Map(rows.map((r) => [r.id, r.name]));
 
       const set = (
-        idKey: "cgstLedgerId" | "sgstLedgerId" | "igstLedgerId" | "roundOffLedgerId",
-        nameKey: "cgstLedgerName" | "sgstLedgerName" | "igstLedgerName" | "roundOffLedgerName",
+        idKey:
+          | "cgstLedgerId"
+          | "sgstLedgerId"
+          | "igstLedgerId"
+          | "roundOffLedgerId"
+          | "cessLedgerId",
+        nameKey:
+          | "cgstLedgerName"
+          | "sgstLedgerName"
+          | "igstLedgerName"
+          | "roundOffLedgerName"
+          | "cessLedgerName",
         id: string | null | undefined
       ) => {
         if (!id || !byId.has(id)) return;
@@ -124,6 +169,7 @@ export async function createDraftVoucherForInvoice(
       set("sgstLedgerId", "sgstLedgerName", overrides.sgstLedgerId);
       set("igstLedgerId", "igstLedgerName", overrides.igstLedgerId);
       set("roundOffLedgerId", "roundOffLedgerName", overrides.roundOffLedgerId);
+      set("cessLedgerId", "cessLedgerName", overrides.cessLedgerId);
 
       if (overrides.discountLedgerId && byId.has(overrides.discountLedgerId)) {
         resolved.discountLedgerId = overrides.discountLedgerId;
@@ -217,6 +263,12 @@ export async function createDraftVoucherForInvoice(
     quantity: l.quantity ?? null,
     unit: l.unit ?? null,
     rate: l.rate ?? null,
+    // How this line allocates against a bill. Without these two the builders'
+    // work dies at the database boundary: a credit note would compute its
+    // `Agst Ref` correctly and then post `New Ref` anyway, because the push
+    // rebuilds its XML from the persisted line and not from the draft.
+    billRefType: l.billRefType ?? null,
+    billRefName: l.billRefName ?? null,
     sortOrder: l.sortOrder,
   }));
 
@@ -244,5 +296,21 @@ export async function createDraftVoucherForInvoice(
     });
   });
 
-  return result;
+  /**
+   * The builder's warnings ride back on the voucher rather than changing this
+   * function's return type.
+   *
+   * They were being computed and dropped, which mattered most for the one that
+   * matters most: an item line whose name matches no stock master posts as a
+   * plain ledger entry and moves no stock, silently. Four callers already
+   * serialise this object straight into their JSON response, so attaching the
+   * warnings here surfaces them everywhere at once without touching a single
+   * call site — and the callers that ignore the field are unaffected.
+   *
+   * Not persisted: `Voucher` has no column for them, and adding one means a
+   * hand-written migration against a database shared with another project. A
+   * warning about how a draft was built is most useful at the moment it is
+   * built, so this is the cheap 90%.
+   */
+  return Object.assign(result, { warnings: draft.warnings });
 }

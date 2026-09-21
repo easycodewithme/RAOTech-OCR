@@ -111,6 +111,15 @@ export function normalizeInvoice(
     cgst: cleanMoney(d.cgst),
     sgst: cleanMoney(d.sgst),
     igst: cleanMoney(d.igst),
+    // Read even though OCR rarely finds one: `buildVoucher` gates its cess line
+    // on this value, so leaving it unread meant a scanned invoice that *did*
+    // carry compensation cess silently posted without it, leaving the voucher
+    // short by that amount.
+    cess: cleanMoney(d.cess),
+    // The invoice a credit or debit note reverses, when the document says so.
+    // Both spellings appear in extractor output depending on the prompt used.
+    againstInvoiceNumber: str(d.against_invoice_number ?? d.original_invoice_number),
+    againstInvoiceDate: cleanDate(d.against_invoice_date ?? d.original_invoice_date),
     discount: cleanMoney(d.discount),
     total: cleanMoney(d.total_amount),
     items: normalizeItems(d.items),

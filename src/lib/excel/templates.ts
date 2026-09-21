@@ -208,20 +208,44 @@ export async function saveTemplate(
   });
 }
 
+export interface RecordTemplateUseArgs {
+  userId: string;
+  templateId: string;
+  /**
+   * The workspace the template was saved against, where the caller knows it.
+   *
+   * Optional on purpose. Lookup crosses the client boundary — that is the whole
+   * point of this module — so the template being applied is routinely another
+   * client's, and the caller's active workspace names the wrong one. Requiring
+   * it here would make the counter silently stop moving for exactly the
+   * cross-client reuse the ranking exists to reward. The boundary that has to
+   * hold is the firm's, and `userId` holds it unconditionally.
+   */
+  clientId?: string;
+}
+
 /**
  * Record that a template was actually applied.
  *
  * Separate from `saveTemplate` on purpose: saving is the user asserting a
  * mapping is right, applying is evidence that it is. Both feed the same counter
  * that ranks the next lookup.
+ *
+ * Scoped rather than keyed on the id alone: a template id is a global handle,
+ * and this counter is what decides which mapping another firm gets offered
+ * first, so an unscoped write is a write into someone else's books-in-waiting.
+ * `updateMany` because the scoped where is not a unique key, and because a
+ * non-match should quietly do nothing — the same best-effort contract the
+ * built-in early return already implies.
  */
 export async function recordTemplateUse(
   prisma: PrismaClient,
-  templateId: string
+  args: RecordTemplateUseArgs
 ): Promise<void> {
-  if (!templateId || templateId.startsWith("builtin:")) return;
-  await prisma.mappingTemplate.update({
-    where: { id: templateId },
+  const { userId, clientId, templateId } = args;
+  if (!userId || !templateId || templateId.startsWith("builtin:")) return;
+  await prisma.mappingTemplate.updateMany({
+    where: { id: templateId, userId, ...(clientId ? { clientId } : {}) },
     data: { hitCount: { increment: 1 }, lastUsedAt: new Date() },
   });
 }

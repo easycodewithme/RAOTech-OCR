@@ -44,8 +44,8 @@ interface UpsertArgs {
   create: { name: string; headerFingerprint: string; hitCount: number };
   update: { hitCount: { increment: number }; lastUsedAt: Date };
 }
-interface UpdateArgs {
-  where: { id: string };
+interface UpdateManyArgs {
+  where: { id: string; userId: string; clientId?: string };
   data: { hitCount: { increment: number }; lastUsedAt: Date };
 }
 
@@ -58,7 +58,7 @@ function fakeDb(rows: StoredTemplate[]) {
       headerFingerprint: args.create.headerFingerprint,
       hitCount: 1,
     })),
-    update: vi.fn(async (_args: UpdateArgs) => ({})),
+    updateMany: vi.fn(async (_args: UpdateManyArgs) => ({ count: 1 })),
   };
   return {
     prisma: { mappingTemplate: calls } as unknown as PrismaClient,
@@ -233,19 +233,35 @@ describe("saveTemplate", () => {
 });
 
 describe("recordTemplateUse", () => {
-  it("increments the counter and stamps the time", async () => {
+  it("increments the counter and stamps the time, scoped to the firm", async () => {
     const { prisma, calls } = fakeDb([]);
-    await recordTemplateUse(prisma, "t1");
-    const call = calls.update.mock.calls[0][0];
-    expect(call.where).toEqual({ id: "t1" });
+    await recordTemplateUse(prisma, { userId: "USER", templateId: "t1" });
+    const call = calls.updateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ id: "t1", userId: "USER" });
     expect(call.data.hitCount).toEqual({ increment: 1 });
     expect(call.data.lastUsedAt).toBeInstanceOf(Date);
   });
 
+  // The id alone is a global handle, so an id lifted from another firm has to
+  // land on nothing rather than on their counter.
+  it("narrows to the workspace when the caller knows which one saved it", async () => {
+    const { prisma, calls } = fakeDb([]);
+    await recordTemplateUse(prisma, {
+      userId: "USER",
+      clientId: "CLIENT_A",
+      templateId: "t1",
+    });
+    expect(calls.updateMany.mock.calls[0][0].where).toEqual({
+      id: "t1",
+      userId: "USER",
+      clientId: "CLIENT_A",
+    });
+  });
+
   it("does nothing for a built-in, which has no row to update", async () => {
     const { prisma, calls } = fakeDb([]);
-    await recordTemplateUse(prisma, "builtin:meesho-sales");
-    expect(calls.update).not.toHaveBeenCalled();
+    await recordTemplateUse(prisma, { userId: "USER", templateId: "builtin:meesho-sales" });
+    expect(calls.updateMany).not.toHaveBeenCalled();
   });
 });
 

@@ -3,6 +3,8 @@
  * Import via Gateway of Tally → Import Data → XML.
  */
 
+import { BILL_WISE_GROUPS } from "../accounting/types";
+
 type ExportLedger = {
   name: string;
   group: string;
@@ -21,6 +23,26 @@ type ExportLine = {
   credit: number;
   hsnCode?: string | null;
   gstRate?: number | null;
+
+  /**
+   * How this line allocates against a bill, decided by the builder that made
+   * it, in Tally's own vocabulary: "New Ref" | "Agst Ref" | "Advance" |
+   * "On Account".
+   *
+   * This exists so the emitter reads the line rather than guessing from it.
+   * The rule used to be hardcoded here — role PARTY meant New Ref, always —
+   * which is right for an invoice and wrong for everything that settles one. A
+   * credit note got a new reference instead of cancelling the original; a bank
+   * payment never reached this branch at all and posted with no allocation. The
+   * builders know which document they are looking at and this layer does not,
+   * so the decision moved to them and the shape stayed here.
+   *
+   * Absent on both fields ⇒ the historical default: a PARTY line opens a New Ref
+   * named after the invoice number (or the RAO- fallback), and nothing else
+   * carries an allocation at all.
+   */
+  billRefType?: string | null;
+  billRefName?: string | null;
 
   /**
    * Set only when this line moves stock. The accounting ledger above then
@@ -79,9 +101,6 @@ const TALLY_VOUCHER: Record<string, string> = {
   RECEIPT: "Receipt",
   CONTRA: "Contra",
 };
-
-/** Groups where Tally should track invoice-level outstandings. */
-const BILLWISE_GROUPS = new Set(["SUNDRY_CREDITORS", "SUNDRY_DEBTORS"]);
 
 /** Ledger types whose GST rate belongs on the master. */
 const RATED_LEDGER_TYPES = new Set(["PURCHASE", "SALE", "EXPENSE", "INCOME"]);
@@ -174,8 +193,11 @@ function ledgerXml(
   const parent = TALLY_GROUP[l.group] || l.group.replaceAll("_", " ");
 
   // Party ledgers need bill-wise on, or Tally cannot age an outstanding
-  // against the invoice it came from.
-  const billWise = BILLWISE_GROUPS.has(l.group);
+  // against the invoice it came from. The same set decides which voucher lines
+  // must carry a BILLALLOCATIONS.LIST — see `BILL_WISE_GROUPS` — because a
+  // ledger flagged here and a line that names no bill is exactly how an
+  // outstanding gets parked On Account and never knocked off.
+  const billWise = BILL_WISE_GROUPS.has(l.group);
 
   const dutyHead = l.group === "DUTIES_AND_TAXES" ? gstDutyHead(ledgerName) : null;
   const dutyBlock = dutyHead
@@ -278,11 +300,64 @@ export function remoteIdFor(voucherId: string): string {
   return `RAO-${voucherId}`;
 }
 
+/**
+ * The bill allocation for one ledger entry, read off the line.
+ *
+ * This used to be a rule rather than data: role PARTY meant `New Ref` named
+ * after the invoice, and everything else meant nothing at all. That is right
+ * for the one document that *opens* an outstanding and wrong for every document
+ * that settles one, and the XML layer is the worst possible place to tell them
+ * apart — it can see a role and an amount, not whether it is looking at a sales
+ * invoice, a credit note against last month's bill, or a supplier payment. So
+ * the decision belongs to the builders and this function only gives it a shape.
+ *
+ * `amount` is passed in as the already-formatted ledger-entry string, not
+ * recomputed: **the allocation amount must equal the ledger entry amount
+ * exactly, sign included, or Tally rejects the whole voucher.** Sharing the one
+ * string makes that unbreakable rather than merely intended.
+ *
+ * @param defaultRef  the voucher's own reference — invoice number, or the
+ *                    stable `RAO-<id>` fallback — used when a line asks for an
+ *                    allocation without naming the bill.
+ */
+function billAllocationXml(l: ExportLine, amount: string, defaultRef: string) {
+  const explicitType = (l.billRefType || "").trim();
+  const explicitName = name(l.billRefName || "");
+
+  /**
+   * A line that says nothing falls back to exactly what this file did before:
+   * PARTY opens a New Ref, everything else carries no allocation. Kept as the
+   * default rather than removed because it is still correct for a purchase or a
+   * sale, and because a line built before this field existed must keep posting
+   * the way it always did.
+   */
+  const billType = explicitType || (l.role === "PARTY" ? "New Ref" : "");
+  if (!billType) return "";
+
+  /**
+   * `On Account` names no bill, because there is no bill — that is the whole
+   * meaning of it. Tally's own export of an unallocated entry carries an empty
+   * `<NAME>`, and putting the voucher's reference there instead would open a
+   * brand new outstanding: the precise bug this change exists to remove, one
+   * level further down.
+   */
+  const refName = billType === "On Account" ? "" : explicitName || defaultRef;
+
+  return `
+              <BILLALLOCATIONS.LIST>
+                <NAME>${esc(refName)}</NAME>
+                <BILLTYPE>${esc(billType)}</BILLTYPE>
+                <AMOUNT>${amount}</AMOUNT>
+              </BILLALLOCATIONS.LIST>`;
+}
+
 function voucherXml(v: ExportVoucher, opts: { includeGstDetails: boolean }) {
   const vtype = TALLY_VOUCHER[v.voucherType] || "Journal";
 
-  // Bill reference for party allocations. Falls back to the stable voucher id
-  // so a party balance is never left unreferenced.
+  // The voucher's own bill reference, used when a line asks for an allocation
+  // without naming one. Falls back to the stable voucher id so a party balance
+  // is never left unreferenced — and stable matters, because a reference that
+  // changed between exports would open a second outstanding on re-import.
   const billRef = name(v.invoiceNumber || "") || `RAO-${v.id.slice(0, 8)}`;
 
   /**
@@ -345,6 +420,28 @@ function voucherXml(v: ExportVoucher, opts: { includeGstDetails: boolean }) {
     })
     .join("");
 
+  /**
+   * Invoice mode or accounting mode — the tag name is what tells Tally which.
+   *
+   * Measured against TallyPrime: a voucher that carries ALLINVENTORYENTRIES
+   * and puts its party and tax lines in ALLLEDGERENTRIES.LIST is refused with
+   * errors=0, exceptions=1 and no reason at all, and refused identically
+   * whatever else is changed. ALLLEDGERENTRIES is the accounting-voucher form;
+   * asking Tally to record an item invoice with it is a contradiction it
+   * declines to explain. LEDGERENTRIES.LIST is the invoice form, and posts.
+   *
+   * Sixteen other shapes were tried against that blank refusal before the tag
+   * was: batch and godown allocations, OBJVIEW / PERSISTEDVIEW / ISINVOICE in
+   * every combination and in none, INVENTORYENTRIES against
+   * ALLINVENTORYENTRIES, PARTYNAME, BASICBUYERNAME, ISPARTYLEDGER, and masters
+   * marked GST-not-applicable. Every one was still refused. Swapping this one
+   * tag posts with no other change, so none of the rest are emitted.
+   *
+   * A voucher with no stock keeps ALLLEDGERENTRIES, which is right for it and
+   * is what every non-inventory push has been posting with all along.
+   */
+  const entryTag = stockLines.length > 0 ? "LEDGERENTRIES" : "ALLLEDGERENTRIES";
+
   const entries = v.lines
     .filter((l) => (l.debit > 0 || l.credit > 0) && !l.stockItemName)
     .map((l) => {
@@ -353,17 +450,10 @@ function voucherXml(v: ExportVoucher, opts: { includeGstDetails: boolean }) {
       // amount; credits are the reverse.
       const amount = isDebit ? `-${l.debit.toFixed(2)}` : l.credit.toFixed(2);
 
-      // The allocation amount must match the ledger entry amount exactly, sign
-      // included, or Tally rejects the voucher.
-      const billAllocation =
-        l.role === "PARTY"
-          ? `
-              <BILLALLOCATIONS.LIST>
-                <NAME>${esc(billRef)}</NAME>
-                <BILLTYPE>New Ref</BILLTYPE>
-                <AMOUNT>${amount}</AMOUNT>
-              </BILLALLOCATIONS.LIST>`
-          : "";
+      // The allocation amount is `amount` itself, never a re-derivation of it:
+      // it must match the ledger entry exactly, sign included, or Tally rejects
+      // the voucher. Every branch below shares this one string.
+      const billAllocation = billAllocationXml(l, amount, billRef);
 
       const hsn =
         opts.includeGstDetails && l.role === "ITEM" && l.hsnCode
@@ -372,11 +462,11 @@ function voucherXml(v: ExportVoucher, opts: { includeGstDetails: boolean }) {
           : "";
 
       return `
-            <ALLLEDGERENTRIES.LIST>
+            <${entryTag}.LIST>
               <LEDGERNAME>${esc(name(l.ledgerName))}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>${isDebit ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
               <AMOUNT>${amount}</AMOUNT>${hsn}${billAllocation}
-            </ALLLEDGERENTRIES.LIST>`;
+            </${entryTag}.LIST>`;
     })
     .join("");
 

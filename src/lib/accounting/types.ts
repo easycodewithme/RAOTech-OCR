@@ -60,6 +60,58 @@ export type LedgerGroup =
   | "CURRENT_LIABILITIES"
   | "FIXED_ASSETS";
 
+/**
+ * The groups Tally tracks invoice-level outstandings for.
+ *
+ * This set is load-bearing in two places at once and they have to agree: the
+ * ledger master is written with `ISBILLWISEON=Yes` for exactly these groups,
+ * and a voucher line touching one of them must therefore carry a
+ * `BILLALLOCATIONS.LIST`. Let the two lists drift and you get the SYNC-03 bug
+ * in its pure form — a ledger Tally is ageing, receiving entries that name no
+ * bill, which Tally silently parks On Account while the original invoice stays
+ * fully outstanding. Defined once here so `exportXml` and the voucher builders
+ * cannot disagree about which ledgers are bill-wise.
+ *
+ * Typed as a set of plain strings, not of `LedgerGroup`, because the export
+ * layer carries the group as free text off a database row.
+ */
+export const BILL_WISE_GROUPS: ReadonlySet<string> = new Set<LedgerGroup>([
+  "SUNDRY_CREDITORS",
+  "SUNDRY_DEBTORS",
+]);
+
+/**
+ * How a line allocates against a bill, in Tally's own vocabulary.
+ *
+ * Kept as a union of Tally's literal strings rather than an enum of our own
+ * because these values are written straight into `<BILLTYPE>` — a translation
+ * table between our names and Tally's would be one more place for a typo to
+ * become a silently mis-aged ledger.
+ *
+ *   New Ref    — this document *creates* an outstanding (an invoice).
+ *   Agst Ref   — this document *settles* a named existing one (a payment
+ *                against a bill, a credit note against the invoice it reverses).
+ *   Advance    — money received or paid before the bill exists.
+ *   On Account — deliberately unallocated. What Tally does anyway when a
+ *                bill-wise ledger gets an entry naming no bill; saying it
+ *                explicitly is the honest form of the same posting.
+ */
+export type BillRefType = "New Ref" | "Agst Ref" | "Advance" | "On Account";
+
+/**
+ * The bill allocation a line carries, when it carries one.
+ *
+ * Null/absent means "no allocation", which is the correct and only correct
+ * value for any line whose ledger is not bill-wise: a purchase account, a tax
+ * head, a bank. Tally rejects a `BILLALLOCATIONS.LIST` on a ledger that is not
+ * being aged.
+ */
+export interface BillAllocation {
+  billRefType?: BillRefType | null;
+  /** The reference being opened or settled. Empty for `On Account`. */
+  billRefName?: string | null;
+}
+
 export interface NormalizedItem {
   name: string;
   qty: number;
@@ -85,6 +137,23 @@ export interface NormalizedInvoice {
   discount: number;
   total: number;
   items: NormalizedItem[];
+
+  /**
+   * The document a credit or debit note reverses.
+   *
+   * Optional because most documents are not returns, and because a return whose
+   * original nobody recorded must still post — it simply cannot be allocated,
+   * and falls back to opening its own reference. When it *is* present the
+   * builder emits `Agst Ref` against it, which is the only way the credit note
+   * actually knocks the invoice off the client's ageing rather than sitting
+   * beside it as a second outstanding.
+   *
+   * Mirrors `Invoice.againstInvoiceNumber` / `againstInvoiceDate`. Carried as
+   * the number and date rather than a foreign key for the same reason the
+   * column is: the original is very often not in this workspace at all.
+   */
+  againstInvoiceNumber?: string | null;
+  againstInvoiceDate?: Date | null;
 }
 
 export interface LedgerRef {
@@ -132,7 +201,7 @@ export interface InventoryAllocation {
   rate?: number | null;
 }
 
-export interface VoucherLineDraft extends InventoryAllocation {
+export interface VoucherLineDraft extends InventoryAllocation, BillAllocation {
   ledgerId: string | null;
   ledgerNameSnapshot: string | null;
   role: LineRole;
@@ -152,7 +221,7 @@ export interface VoucherLineDraft extends InventoryAllocation {
  * invite the bug where a negative credit quietly becomes a debit somewhere
  * downstream and the voucher still "balances".
  */
-export interface VoucherLineInput extends InventoryAllocation {
+export interface VoucherLineInput extends InventoryAllocation, BillAllocation {
   role: LineRole;
   ledgerId: string | null;
   ledgerName: string | null;
