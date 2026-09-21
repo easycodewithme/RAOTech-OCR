@@ -299,10 +299,37 @@ by the presence of masters rather than by a setting: an item line gets an
 inventory allocation only if the workspace has a stock item of that name. A
 services client never has any, so nothing about their vouchers changes.
 
-1. Upload item masters ([3.4](#34-bulk-master-upload--ledgers-and-stock-items)).
-2. Upload a `WITH_ITEM` purchase sheet whose item names match those masters.
+A matching pair of sample files is committed for exactly this walkthrough:
+
+| File | What it is |
+| --- | --- |
+| `scripts/demo-item-masters.xlsx` | 5 stock items, each with a base unit, HSN and GST rate |
+| `scripts/demo-sales-register-items.xlsx` | 5 sales bills over 9 line rows, moving those 5 items |
+
+They are a pair on purpose. The register alone posts as ordinary ledger lines and
+nothing complains; upload the masters first and the same register posts with
+stock. That difference is the feature, so the demo should show both halves.
+
+Regenerate them with `npx tsx scripts/make-demo-inventory-sheets.mts`, and check
+them without a database or a connector with `npx tsx scripts/verify-demo-sheets.mts`
+— which runs the real parser, layout detection, auto-mapping, validator and
+mapper and prints the five bills it would commit.
+
+1. Upload item masters ([3.4](#34-bulk-master-upload--ledgers-and-stock-items)),
+   `Item Master` → `scripts/demo-item-masters.xlsx`. All 5 rows should commit.
+2. Upload `scripts/demo-sales-register-items.xlsx` as **Sale**, item mode
+   **With item**. The header row is row 4; the grand-total row is dropped; the
+   9 rows fan in to **5 bills** because rows sharing an invoice number are one
+   document. Pick the sales and GST ledgers at step 4 and create the 5 parties.
 3. Push, then check in TallyPrime: `Gateway → Stock Summary`. The quantities
    should have moved, not just the money.
+
+**Reconciliation check:** taxable `135390.00`, tax `19997.70`, total
+`155387.70` — the same figures as the sheet's own grand-total row. `INV-3003`
+is the one to look at on the review screen: one bill carrying 5%, 12% and 18%
+lines at once, which is the case the competitor's mapping UI cannot express.
+`INV-3002`, `INV-3004` and `INV-3005` are interstate and must show IGST only,
+decided from each party's GSTIN state code rather than from a sheet-wide setting.
 
 **What wrong looks like:** the expense doubled. An item line's accounting ledger
 belongs *inside* its inventory entry; emitted both there and beside it, Tally
@@ -312,28 +339,40 @@ debited twice. There is a unit test pinning this
 because nothing on our side would ever report it — the client would just find
 their expenses doubled.
 
-**Two company settings have to be on, and they are separate.**
+**One company setting has to be on:** `F11 → Maintain Inventory`. Without it a
+company accepts stock item masters quite happily and then refuses every voucher
+that names one, *with no reason given*.
 
-`F11 → Inventory Features → Maintain Stock` lets stock exist at all. Without it
-a company accepts stock item masters quite happily and then refuses every
-voucher that names one, *with no reason given*.
+**An earlier version of this page blamed a second setting. It was wrong**, and
+the way it was wrong is worth keeping, because the same trap is still there for
+the next unexplained blank rejection.
 
-But that alone is not enough. Measured on a company with Maintain Stock **on**:
-a Stock Journal — a pure inventory voucher — posts fine, while a Purchase or a
-Sales voucher carrying the same item is rejected with a blank reason, in every
-XML shape tried. Stock can move; an *item invoice* cannot be recorded. That is
-governed separately, by invoicing being enabled for the company
-(`F11 → Accounting Features → Enable Invoicing`, and purchases recorded in
-invoice mode).
+The symptom was: on a company with inventory on, a Stock Journal posts and a
+plain Purchase posts, but a Purchase carrying the same item is refused with
+`errors=0, exceptions=1` and no reason at all. That reads exactly like a company
+that can move stock but cannot record an item invoice, so this page told you to
+go and enable invoicing. There is no such setting in TallyPrime, and the hours
+spent looking for one were spent on the wrong side of the wire.
 
-The quick way to tell the two apart, if a stock push is failing:
+The cause was ours. The party and tax lines were being emitted in
+`ALLLEDGERENTRIES.LIST`, which is the *accounting-voucher* form. A voucher that
+carries `ALLINVENTORYENTRIES` has to put them in `LEDGERENTRIES.LIST`, the
+invoice form. Tally will not say so; it just declines. Sixteen other shapes were
+tried first — batch and godown allocations, `OBJVIEW` / `PERSISTEDVIEW` /
+`ISINVOICE` in every combination and in none, `INVENTORYENTRIES` against
+`ALLINVENTORYENTRIES`, `PARTYNAME`, `ISPARTYLEDGER`, masters marked
+GST-not-applicable — and every one was still refused. Swapping the single tag
+posts with no other change.
+
+The lesson for the next blank rejection: **a refusal that survives every variant
+of a setting is not about that setting.** Bisect against Tally's own published
+sample rather than reasoning about which company feature could explain it.
+
+If a stock push is failing, this still tells you where you are:
 
 ```bash
 npx tsx scripts/probe-inventory.mts
 ```
-
-A Stock Journal that posts while Purchase-with-items does not means stock is
-fine and invoicing is the thing to switch on.
 
 Headless:
 
@@ -363,23 +402,76 @@ screen a firm owner opens on a Monday.
 with a thousand drafts. There is a test pinning that (`portfolio.test.ts`),
 because it is the kind of ordering that gets "improved" into a total.
 
-### 3.7 Stock items
+### 3.7 Inventory
 
-**Settings → Ledgers & Rules → Stock Items.** These masters are the switch for
-the whole inventory feature: a voucher line becomes an inventory allocation only
-if an item of that name exists here, so a services client has an empty tab and
-nothing about their vouchers changes.
+**Sidebar → Inventory.** Three tabs. This used to be a tab inside Settings →
+Ledgers & Rules; that tab is gone, and the link left in its place points here.
+
+**Stock summary** — closing quantity and value per item, built by replaying every
+voucher line that names the item against its opening stock
+(`lib/inventory/stockLedger.ts`). Worth checking:
+
+- The **In Tally / Including pending** switch changes the numbers. "In Tally"
+  counts `POSTED` vouchers only, so it is the figure to compare against
+  TallyPrime's own `Gateway → Stock Summary`; "Including pending" adds drafts
+  and approved.
+- Quantities should agree with Tally. **Values may not** — valuation here is
+  weighted average, and Tally can be set to FIFO or Last Purchase Cost per item.
+  The banner at the top of the screen says so; that is deliberate.
+- Sort by Closing or Value. Items that have never moved sort last under **Last
+  moved** whichever way the column points.
+
+**Items** — the masters, and the only place a base unit can still be corrected.
 
 - Add an item without a unit. It should refuse — the reason is on the screen.
-- Edit the unit of an item that is not yet on any voucher: allowed.
-- Edit the unit of one that **is**: the field is closed and says why. Tally will
-  not alter a base unit once stock has moved, so an edit here would only make
-  the next push fail.
-- Change an HSN on an item Tally already has. It should say it is queued to
-  update on the next sync — the master goes back into `MASTER_CREATE`, which is
-  idempotent, so Tally alters rather than duplicating.
+- Edit the unit of an item that is not yet on any voucher: allowed. Edit the
+  unit of one that **is**: the field is closed and says why.
+- Change an HSN on an item Tally already has: it says it is queued to update on
+  the next sync. Change only **opening qty or rate** on the same item: it does
+  *not* say that, because opening stock is not carried by any tag in
+  `stockItemXml` and re-queueing would re-push bytes identical to the ones Tally
+  already has.
+- Opening stock feeds the summary and is **not** sent to Tally. Set it in Tally
+  on the item itself — see "Not here yet" below.
+- Enter and Escape both work in the inline cells — Enter commits, Escape
+  restores the rendered value.
 - Try to delete an item that is on a voucher: refused. Delete an unused one:
   removed here only, never from Tally.
+
+**Exceptions** — what would fail a push, named rather than counted. A missing
+unit is blocking; an unsynced master is blocking only once a voucher depends on
+it; negative stock and amount-without-quantity lines are warnings.
+
+**One item's ledger** — click any item name. Every voucher line that touched it,
+oldest first, with a running balance and a link to each voucher. The row where
+the balance crosses zero carries the warning triangle.
+
+**Copy items to another client** — the button on the header, when the user has
+more than one client. Name, unit, HSN, GST rate and alias travel; opening stock
+and the Tally identity (`tallyGuid`, `tallyCompanyId`, `tallySyncedAt`) do not.
+An item whose name already exists in the target is skipped, case-insensitively,
+rather than overwritten — check the count it reports.
+
+`stockLedger.test.ts` pins the arithmetic: direction from debit/credit (so
+returns fall out without a voucher-type list), weighted average relieved at the
+pre-issue average, and the float-dust case where an item that is exactly empty
+must not report a closing rate.
+
+**Not here yet, and why.** Both gaps are one-way doors that need a live Tally to
+close safely, so neither was guessed at:
+
+- **Opening stock is not pushed.** `stockItemXml` carries no opening-balance
+  tag. Rule 12 in `connector-protocol.md` is the reason to leave it alone: Tally
+  replays the *original* error for any master name whose create has ever failed,
+  so a wrong tag would poison every item name on the first push and no corrected
+  retry recovers it. Measure the tag against a live company first.
+- **Tally's own stock is not read back.** `MASTER_PULL` fetches companies and
+  ledgers only (`tally-connector/internal/runner/runner.go`), so every figure on
+  these screens counts what this app posted and nothing the client punched into
+  Tally directly. Closing that needs a `StockItems` call in
+  `internal/tally/client.go`, a field on `cloud.JobResult`, and a protocol
+  version bump — Go changes, in the one component with no test double for
+  Tally itself.
 
 ### 3.8 Pushing to Tally
 
@@ -493,7 +585,7 @@ happened next. "Not sure" has to be treated as "it is in there".
 | `Ledger 'Unknown' does not exist!` | a voucher line had no ledger and the XML writer substituted a placeholder | find the unmapped line; approval should have blocked this |
 | `Ledger 'X' does not exist!` | the ledger exists here but not in Tally | run **Sync masters** before pushing |
 | `Stock Item 'X' does not exist!` | same, for a stock item | run **Sync masters**; Tally invents neither |
-| Stock voucher rejected with **no reason** | the company has inventory off | `F11 → Inventory Features → Maintain Stock` |
+| Stock voucher rejected with **no reason** | inventory off on the company, *or* ledger entries emitted in `ALLLEDGERENTRIES.LIST` instead of `LEDGERENTRIES.LIST` | check `F11 → Maintain Inventory` first; if that is on, see [3.5](#35-stock-vouchers-that-move-inventory) |
 | A master create keeps failing with a stale error | Tally poisons a name that has ever failed | fix the cause, then restart TallyPrime — retrying the same name replays the old error |
 | Voucher stuck on **amber / sending** | the connector took the job and never reported back | check the agent is running; re-push — it is idempotent |
 | Nothing happens on push | no connector paired, or Tally not running | Settings → Tally shows last-seen and Tally reachability |
