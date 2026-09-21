@@ -1,16 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Download,
   Loader2,
   Monitor,
   PlugZap,
   RefreshCw,
   Save,
+  Terminal,
   Wifi,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,11 +20,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
+import { formatRelative } from "@/lib/format";
 import {
   fetchDevices,
   fetchSyncStatus,
   formatTallyDate,
-  relativeTime,
   useConnectorStatus,
   type ConnectorDevice,
   type TallyCompany,
@@ -37,7 +39,46 @@ import {
  * and a Tally that is actually answering on its HTTP gateway. When one of them
  * is false, everything downstream queues — so each section says plainly which
  * of the three it is reporting on.
+ *
+ * UX-04: this screen used to open on a pairing code and the sentence "Open the
+ * Rao-Tech connector on the machine running Tally", with nothing anywhere in
+ * the product that said what that was or where to get it. Every new customer's
+ * first action was a support ticket, at the moment they were deciding whether
+ * the product works at all. The first-run sequence below replaces that: what to
+ * install, where it has to run, what to switch on in Tally, and how to tell it
+ * worked — before the code is ever asked for.
  */
+
+/* ------------------------------------------------------ release configuration */
+
+/**
+ * MUST BE SET BEFORE RELEASE.
+ *
+ * The published download for the Windows connector — a direct link to the
+ * signed `.exe` (or to a release page that offers it). There is no such URL
+ * yet: the agent is built from `tally-connector/` and handed over by the
+ * Rao-Tech team, so shipping a link here would be inventing one, and a button
+ * that 404s at first run is worse than no button.
+ *
+ * Leave it empty and the screen tells the truth — it shows the build-and-run
+ * instructions instead of a dead download. Set it to the real URL and the
+ * download step becomes a button with no other change needed.
+ */
+// Annotated `string` rather than left as the literal `""` so the empty branch
+// below stays type-checked when a real URL is dropped in.
+const CONNECTOR_DOWNLOAD_URL: string = "";
+
+/** TallyPrime's HTTP-XML gateway default; the connector's default too. */
+const DEFAULT_TALLY_PORT = 9000;
+
+/** Where the agent keeps its settings and its log, quoted on screen so a
+ *  support call can start with "send me that file" rather than a hunt. */
+const CONNECTOR_SETTINGS_PATH = "%AppData%\\RaoTech\\connector.json";
+const CONNECTOR_LOG_PATH = "%AppData%\\RaoTech\\logs\\connector.log";
+
+/** A device is "online" if it has checked in inside three heartbeats. The
+ *  connector heartbeats every 30s; the devices API uses the same window. */
+const ONLINE_WINDOW_MS = 90_000;
 
 /** A change in either signature means the connector has answered our job. */
 function companySignature(c: Connection | null): string {
@@ -49,14 +90,38 @@ function deviceSignature(c: Connection | null): string {
   return d ? `${d.lastSeenAt ?? ""}|${d.tallyReachable}|${d.tallyMessage ?? ""}` : "none";
 }
 
+function isOnline(device: ConnectorDevice, now: number): boolean {
+  if (device.revokedAt || !device.lastSeenAt) return false;
+  return now - new Date(device.lastSeenAt).getTime() < ONLINE_WINDOW_MS;
+}
+
+/**
+ * A clock that ticks.
+ *
+ * Every relative time on this page is computed from it rather than from a
+ * `Date.now()` read during render — partly because reading the clock mid-render
+ * is not idempotent, and partly because "2 minutes ago" should become "3
+ * minutes ago" on its own. A device that went quiet is the thing this screen
+ * exists to show, and a frozen "just now" would hide exactly that.
+ */
+function useNow(intervalMs = 30_000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
+
 type Watch = { kind: "master" | "test"; jobId: string; baseline: string; deadline: number };
+type Busy = "pair" | "save" | "master" | "test" | "revoke" | null;
 
 export default function TallyConnection({ clientName }: { clientName?: string }) {
   const { toast } = useToast();
   const { data, loading, refresh, setData } = useConnectorStatus({ intervalMs: 15_000 });
   const [devices, setDevices] = useState<ConnectorDevice[]>([]);
   const [watch, setWatch] = useState<Watch | null>(null);
-  const [busy, setBusy] = useState<"pair" | "save" | "master" | "test" | "revoke" | null>(null);
+  const [busy, setBusy] = useState<Busy>(null);
 
   const loadDevices = useCallback(async (alive: () => boolean = () => true) => {
     try {
@@ -158,39 +223,63 @@ export default function TallyConnection({ clientName }: { clientName?: string })
     }
   }
 
-  const pairedDevice = devices.find((d) => !d.revokedAt) ?? null;
+  /**
+   * Every live device, not the first one.
+   *
+   * This screen used to render `devices.find(d => !d.revokedAt)` — so a second
+   * machine that had paired to the same account, whether a colleague's laptop
+   * or one nobody remembered setting up, was invisible to the person who owns
+   * the books it can write to. There is nothing stopping two connectors from
+   * pairing, and job claiming is explicitly designed for it, so the list has to
+   * show all of them and let each one be cut off individually.
+   */
+  const pairedDevices = useMemo(() => devices.filter((d) => !d.revokedAt), [devices]);
 
   return (
-    <div className="p-6 md:p-10 space-y-6">
+    <div className="space-y-6 p-4 md:p-10">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <Link
             href="/settings"
-            className="mb-2 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800"
+            className="mb-2 inline-flex min-h-11 cursor-pointer items-center gap-1 text-xs text-[var(--spx-muted)] transition-colors duration-150 hover:text-[var(--spx-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] motion-reduce:transition-none"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> Ledgers &amp; Rules
           </Link>
-          <h1 className="text-3xl font-bold tracking-tight">Tally Connection</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--spx-text)] sm:text-3xl">
+            Tally Connection
+          </h1>
+          <p className="mt-1 text-sm text-[var(--spx-muted)]">
             {clientName ? `${clientName} · ` : ""}Pair the desktop connector, name the company in
             Tally, and check the gateway
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => { void refresh(); void loadDevices(); }}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="min-h-11 cursor-pointer"
+          onClick={() => {
+            void refresh();
+            void loadDevices();
+          }}
+        >
           <RefreshCw className="mr-2 h-4 w-4" /> Refresh
         </Button>
       </div>
 
       {loading && !data ? (
-        <div className="rounded-xl border bg-white p-6 text-sm text-gray-500 shadow-sm">
-          <Loader2 className="mr-2 inline h-4 w-4 animate-spin" /> Reading the connection…
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-xl border border-[var(--spx-border)] bg-[var(--spx-card)] p-6 text-sm text-[var(--spx-muted)] shadow-sm"
+        >
+          <Loader2 className="mr-2 inline h-4 w-4 animate-spin motion-reduce:animate-none" /> Reading
+          the connection…
         </div>
       ) : (
         <>
           <DeviceSection
-            device={pairedDevice}
+            devices={pairedDevices}
             summary={data?.device ?? null}
-            connectorOnline={data?.connectorOnline ?? false}
             busy={busy}
             setBusy={setBusy}
             onChanged={async () => {
@@ -200,7 +289,7 @@ export default function TallyConnection({ clientName }: { clientName?: string })
 
           <CompanySection
             company={data?.company ?? null}
-            paired={!!pairedDevice}
+            paired={pairedDevices.length > 0}
             busy={busy}
             setBusy={setBusy}
             onSaved={(company) =>
@@ -217,29 +306,90 @@ export default function TallyConnection({ clientName }: { clientName?: string })
   );
 }
 
-/* ------------------------------------------------------------- device */
+/* ------------------------------------------------------------- shared shells */
+
+function Section({
+  title,
+  icon,
+  aside,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  aside?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-[var(--spx-border)] bg-[var(--spx-card)] shadow-sm">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--spx-border)] bg-[var(--spx-input-bg)] px-4 py-3">
+        <div className="flex items-center gap-2">
+          {icon}
+          <h2 className="font-semibold text-[var(--spx-text)]">{title}</h2>
+        </div>
+        {aside}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+/** Status pills. Each tone is declared for both themes: one shade cannot clear
+ *  3:1 against a white card and a near-black one at the same time. */
+const TONE = {
+  ok: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300",
+  warn: "bg-amber-100 text-amber-900 dark:bg-amber-500/15 dark:text-amber-300",
+  bad: "bg-red-100 text-red-800 dark:bg-red-500/15 dark:text-red-300",
+  idle: "bg-[var(--spx-input-bg)] text-[var(--spx-text-secondary)]",
+} as const;
+
+function Pill({ tone, children }: { tone: keyof typeof TONE; children: React.ReactNode }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-bold ${TONE[tone]}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** A short literal — a command, a path, a port. Monospace, and it wraps rather
+ *  than pushing the page sideways on a 375px screen. */
+function Mono({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="break-all rounded bg-[var(--spx-input-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--spx-text)]">
+      {children}
+    </code>
+  );
+}
+
+/* ------------------------------------------------------------------- device */
 
 function DeviceSection({
-  device,
+  devices,
   summary,
-  connectorOnline,
   busy,
   setBusy,
   onChanged,
 }: {
-  device: ConnectorDevice | null;
+  devices: ConnectorDevice[];
   summary: Connection["device"];
-  connectorOnline: boolean;
-  busy: string | null;
-  setBusy: (b: "pair" | "save" | "master" | "test" | "revoke" | null) => void;
+  busy: Busy;
+  setBusy: (b: Busy) => void;
   onChanged: () => Promise<void>;
 }) {
   const { toast } = useToast();
+  const now = useNow();
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
-  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [confirmRevoke, setConfirmRevoke] = useState<ConnectorDevice | null>(null);
   const changedRef = useRef(onChanged);
   changedRef.current = onChanged;
+  /**
+   * Which devices already existed when the code was minted. Watching for "any
+   * live device" would have been wrong the moment a second machine was being
+   * added: the code would clear itself instantly against the first one.
+   */
+  const knownIdsRef = useRef<Set<string>>(new Set());
 
   // The code is live for ten minutes; showing the countdown is the difference
   // between "type this in" and "type this in before it stops working".
@@ -268,7 +418,8 @@ function DeviceSection({
         return;
       }
       if (!alive) return;
-      if (list.some((d) => !d.revokedAt)) {
+      const claimed = list.some((d) => !d.revokedAt && !knownIdsRef.current.has(d.id));
+      if (claimed) {
         setCode(null);
         void changedRef.current();
       }
@@ -288,14 +439,14 @@ function DeviceSection({
         toast(body.error || "Could not create a pairing code", "error");
         return;
       }
+      knownIdsRef.current = new Set(devices.map((d) => d.id));
       setCode({ code: body.code, expiresAt: body.expiresAt });
     } finally {
       setBusy(null);
     }
   }
 
-  async function revoke() {
-    if (!device) return;
+  async function revoke(device: ConnectorDevice) {
     setBusy("revoke");
     try {
       const res = await fetch(`/api/connector/devices/${device.id}`, { method: "DELETE" });
@@ -304,113 +455,432 @@ function DeviceSection({
         toast(body.error || "Could not revoke the device", "error");
         return;
       }
-      setConfirmRevoke(false);
-      toast("Device revoked. It will stop polling on its next request.", "success");
+      setConfirmRevoke(null);
+      toast(`${device.deviceName} revoked. It stops polling on its next request.`, "success");
       await onChanged();
     } finally {
       setBusy(null);
     }
   }
 
-  const host = device?.tallyHost ?? summary?.tallyHost ?? "localhost";
-  const port = device?.tallyPort ?? summary?.tallyPort ?? 9000;
+  const onlineCount = devices.filter((d) => isOnline(d, now)).length;
+  const port = devices[0]?.tallyPort ?? summary?.tallyPort ?? DEFAULT_TALLY_PORT;
 
   return (
-    <section className="rounded-xl border bg-white shadow-sm">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-gray-50/50 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Monitor className="h-4 w-4 text-gray-500" />
-          <h2 className="font-semibold">Connector device</h2>
-        </div>
-        {device &&
-          (connectorOnline ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">
-              <CheckCircle2 className="h-3 w-3" /> Online
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700">
-              <PlugZap className="h-3 w-3" /> Offline
-            </span>
+    <Section
+      title={devices.length > 1 ? "Connector devices" : "Connector device"}
+      icon={<Monitor className="h-4 w-4 text-[var(--spx-muted)]" />}
+      aside={
+        devices.length > 0 ? (
+          <Pill tone={onlineCount > 0 ? "ok" : "warn"}>
+            {onlineCount > 0 ? <CheckCircle2 className="h-3 w-3" /> : <PlugZap className="h-3 w-3" />}
+            {onlineCount > 0
+              ? `${onlineCount} of ${devices.length} online`
+              : devices.length === 1
+                ? "Offline"
+                : `${devices.length} paired, none online`}
+          </Pill>
+        ) : null
+      }
+    >
+      {devices.length > 0 && (
+        <ul className="divide-y divide-[var(--spx-border)]">
+          {devices.map((device) => (
+            <DeviceRow
+              key={device.id}
+              device={device}
+              now={now}
+              fallbackPort={port}
+              busy={busy}
+              onRevoke={() => setConfirmRevoke(device)}
+            />
           ))}
-      </header>
+        </ul>
+      )}
 
-      {device ? (
-        <div className="grid gap-4 p-4 md:grid-cols-2">
-          <dl className="space-y-2 text-sm">
-            <Row label="Device" value={device.deviceName} />
-            <Row label="Last seen" value={relativeTime(device.lastSeenAt ?? summary?.lastSeenAt)} />
-            <Row label="Connector version" value={device.appVersion || "—"} />
-            <Row label="Tally gateway" value={`${host}:${port}`} mono />
-          </dl>
-          <div className="flex flex-col items-start justify-between gap-3 md:items-end">
-            <p className="text-xs text-gray-500 md:text-right">
-              Revoking invalidates this machine&apos;s token. The desktop stops polling on its next
-              request and has to be paired again; nothing already in Tally is affected.
+      {/* The pairing code, whether this is the first device or the fifth. */}
+      {code ? (
+        <div className="space-y-4 border-t border-[var(--spx-border)] p-4">
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-xl border border-dashed border-[var(--spx-border)] bg-[var(--spx-input-bg)] px-4 py-6 text-center"
+          >
+            <p className="text-xs uppercase tracking-[1.5px] text-[var(--spx-muted)]">
+              Pairing code
             </p>
-            <Button variant="outline" size="sm" onClick={() => setConfirmRevoke(true)}>
-              Revoke device
-            </Button>
-          </div>
-        </div>
-      ) : code ? (
-        <div className="space-y-4 p-4">
-          <div className="rounded-xl border border-dashed bg-gray-50 px-4 py-6 text-center">
-            <p className="font-mono text-4xl font-bold tracking-[0.3em] text-gray-900">{code.code}</p>
-            <p className="mt-2 text-xs text-gray-500">
+            <p className="mt-2 font-mono text-3xl font-bold tracking-[0.2em] text-[var(--spx-text)] sm:text-4xl sm:tracking-[0.3em]">
+              {code.code}
+            </p>
+            <p className="mt-2 text-xs text-[var(--spx-muted)]">
               Expires in{" "}
-              <span className="font-medium text-gray-700">
+              <span className="font-medium text-[var(--spx-text-secondary)]">
                 {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}
-              </span>
+              </span>{" "}
+              · single use
             </p>
           </div>
-          <p className="text-sm text-gray-600">
-            Open the Rao-Tech connector on the machine running Tally and enter this code. This page
-            will switch over on its own the moment it is claimed.
-          </p>
-          <p className="flex items-center gap-2 text-xs text-gray-400">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for the connector…
+          <div className="space-y-2 text-sm text-[var(--spx-text-secondary)]">
+            <p>
+              Enter it in the connector on the machine running Tally — the tray icon opens a
+              settings page with a field for it — or from a terminal on that machine:
+            </p>
+            <Mono>connector.exe -pair {code.code}</Mono>
+            <p>
+              This page switches over on its own the moment the code is claimed. Nothing else is
+              typed on the desktop: the code carries the identity, so no password reaches the
+              connector.
+            </p>
+          </div>
+          <p
+            role="status"
+            aria-live="polite"
+            className="flex items-center gap-2 text-xs text-[var(--spx-muted)]"
+          >
+            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> Waiting for
+            the connector…
           </p>
         </div>
+      ) : devices.length === 0 ? (
+        <FirstRun port={port} onPair={pair} pairing={busy === "pair"} />
       ) : (
-        <div className="space-y-3 p-4">
-          <p className="text-sm text-gray-600">
-            No device is paired. Tally listens only on the accountant&apos;s own machine, so a small
-            desktop connector runs there and polls this workspace for work — nothing dials in.
-          </p>
-          <Button size="sm" onClick={pair} disabled={busy === "pair"}>
-            {busy === "pair" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Pair a device
+        <div className="flex flex-wrap items-center gap-3 border-t border-[var(--spx-border)] p-4">
+          <Button
+            variant="outline"
+            size="sm"
+            className="min-h-11 cursor-pointer"
+            onClick={pair}
+            disabled={busy === "pair"}
+          >
+            {busy === "pair" ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : null}
+            Pair another machine
           </Button>
+          <p className="text-xs text-[var(--spx-muted)]">
+            Every machine that should post to this workspace needs its own pairing. Re-pairing a
+            machine already listed replaces its token instead of adding a row.
+          </p>
         </div>
       )}
 
-      {confirmRevoke && device && (
+      {confirmRevoke && (
         <ConfirmDialog
-          title={`Revoke ${device.deviceName}?`}
+          title={`Revoke ${confirmRevoke.deviceName}?`}
           body={
             <>
-              The connector on that machine will get a 401 on its next poll and stop. Queued
-              vouchers stay queued until a device is paired again. Vouchers already in Tally are
-              untouched.
+              The connector on that machine gets a 401 on its next poll and stops. Queued vouchers
+              stay queued until a device is paired again. Vouchers already in Tally are untouched.
+              {confirmRevoke.lastSeenAt && (
+                <> It last checked in {formatRelative(confirmRevoke.lastSeenAt, now, "never")}.</>
+              )}
             </>
           }
           confirmLabel={busy === "revoke" ? "Revoking…" : "Revoke device"}
           busy={busy === "revoke"}
-          onConfirm={revoke}
-          onCancel={() => setConfirmRevoke(false)}
+          onConfirm={() => void revoke(confirmRevoke)}
+          onCancel={() => setConfirmRevoke(null)}
         />
       )}
-    </section>
+    </Section>
   );
 }
 
-/* ------------------------------------------------------------ company */
+function DeviceRow({
+  device,
+  now,
+  fallbackPort,
+  busy,
+  onRevoke,
+}: {
+  device: ConnectorDevice;
+  now: number;
+  fallbackPort: number;
+  busy: Busy;
+  onRevoke: () => void;
+}) {
+  const online = isOnline(device, now);
+  const host = device.tallyHost ?? "localhost";
+  const port = device.tallyPort ?? fallbackPort;
 
-const STATUS_TONE: Record<string, string> = {
-  READY: "bg-emerald-100 text-emerald-700",
-  SYNCING: "bg-amber-100 text-amber-700",
-  ERROR: "bg-red-100 text-red-700",
-  UNSYNCED: "bg-slate-100 text-slate-600",
+  return (
+    <li className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center">
+      <div className="min-w-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate font-medium text-[var(--spx-text)]">{device.deviceName}</span>
+          <Pill tone={online ? "ok" : "warn"}>
+            {online ? <CheckCircle2 className="h-3 w-3" /> : <PlugZap className="h-3 w-3" />}
+            {online ? "Online" : "Offline"}
+          </Pill>
+        </div>
+        <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
+          {/* Last seen is the field that tells an owner whether a machine they
+              do not recognise is dormant or writing to the books right now. */}
+          <Row label="Last seen" value={formatRelative(device.lastSeenAt, now, "never")} />
+          <Row label="Connector version" value={device.appVersion || "—"} />
+          <Row label="Tally gateway" value={`${host}:${port}`} mono />
+          <Row
+            label="Tally"
+            value={
+              device.tallyReachable === true
+                ? "answering"
+                : device.tallyReachable === false
+                  ? "not answering"
+                  : "not checked yet"
+            }
+          />
+        </dl>
+      </div>
+      <div className="flex flex-col items-start gap-2 md:items-end">
+        <Button
+          variant="outline"
+          size="sm"
+          className="min-h-11 cursor-pointer"
+          onClick={onRevoke}
+          disabled={busy === "revoke"}
+          aria-label={`Revoke ${device.deviceName}`}
+        >
+          Revoke
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+/* ---------------------------------------------------------------- first run */
+
+/**
+ * What to do when nothing is paired yet.
+ *
+ * Ordered the way it actually has to happen on the customer's machine, and
+ * explicit that all of it happens *there* rather than here — the single most
+ * common misunderstanding is that this web page talks to Tally. It cannot:
+ * Tally listens on an accountant's own Windows box, usually behind NAT, and
+ * every byte between the two is an outbound HTTPS poll made by the desktop.
+ */
+function FirstRun({
+  port,
+  onPair,
+  pairing,
+}: {
+  port: number;
+  onPair: () => void;
+  pairing: boolean;
+}) {
+  // Rendered after mount only: the connector has to be pointed at this exact
+  // workspace URL, and reading it during SSR would risk a hydration mismatch
+  // behind a proxy that rewrites the host.
+  const [origin, setOrigin] = useState<string | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOrigin(window.location.origin);
+  }, []);
+
+  return (
+    <div className="space-y-5 p-4">
+      <div className="rounded-lg border border-[var(--spx-border)] bg-[var(--spx-input-bg)] p-3 text-sm text-[var(--spx-text-secondary)]">
+        <p>
+          <strong className="text-[var(--spx-text)]">Nothing is paired yet.</strong> Tally has no
+          public address — it listens only on the machine it runs on — so a small Windows agent, the
+          Rao-Tech connector, runs on that machine and polls this workspace for work. Traffic is
+          outbound from the desktop over HTTPS only; nothing dials in, and no port has to be opened
+          to the internet.
+        </p>
+      </div>
+
+      <ol className="space-y-4">
+        <Step
+          n={1}
+          title="Install the connector on the machine running Tally"
+          detail={
+            <>
+              Not on this machine unless Tally runs here too. It is a single Windows{" "}
+              <Mono>.exe</Mono> with nothing else to install — no runtime, no service account. It
+              keeps its settings in <Mono>{CONNECTOR_SETTINGS_PATH}</Mono>.
+            </>
+          }
+        >
+          <DownloadStep origin={origin} />
+        </Step>
+
+        <Step
+          n={2}
+          title="Switch on Tally's gateway"
+          detail={
+            <>
+              In TallyPrime on that machine:{" "}
+              <Mono>F1: Help → Settings → Connectivity → Client/Server Configuration</Mono>
+            </>
+          }
+        >
+          <ul className="space-y-1.5 text-sm text-[var(--spx-text-secondary)]">
+            <li>
+              TallyPrime acts as <strong className="text-[var(--spx-text)]">Server</strong> (or{" "}
+              <strong className="text-[var(--spx-text)]">Both</strong>)
+            </li>
+            <li>
+              Enable ODBC <strong className="text-[var(--spx-text)]">Yes</strong>
+            </li>
+            <li>
+              Port <Mono>{port}</Mono> — anything in 9000–9999 works, as long as the connector is
+              set to the same one
+            </li>
+            <li>Restart Tally when it asks</li>
+            <li>
+              Leave <Mono>tally.exe</Mono> running{" "}
+              <strong className="text-[var(--spx-text)]">with the company open</strong>. A running{" "}
+              <Mono>tallygatewayserver.exe</Mono> is a different component and is not enough on its
+              own.
+            </li>
+          </ul>
+        </Step>
+
+        <Step
+          n={3}
+          title="Pair it with this workspace"
+          detail={
+            <>
+              Generate a code here and type it into the connector on that machine. The code is
+              single-use and lives for ten minutes; claiming it returns a token bound to that one
+              machine, which is what revoking later cuts off. No password is ever typed into the
+              desktop agent.
+            </>
+          }
+        >
+          <Button
+            size="sm"
+            className="min-h-11 cursor-pointer"
+            onClick={onPair}
+            disabled={pairing}
+          >
+            {pairing ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : null}
+            Generate a pairing code
+          </Button>
+        </Step>
+
+        <Step
+          n={4}
+          title="Check that it worked"
+          detail={
+            <>
+              This panel switches to the paired machine by itself, within a few seconds, and its
+              status turns <strong className="text-[var(--spx-text)]">Online</strong> once the
+              connector starts its 30-second heartbeat. Then name the company below and run{" "}
+              <strong className="text-[var(--spx-text)]">Test Connection</strong> — it asks the
+              desktop to knock on Tally and reports back in Tally&apos;s own words.
+            </>
+          }
+        >
+          <p className="text-sm text-[var(--spx-text-secondary)]">
+            If it stays offline, <Mono>connector.exe -status</Mono> on that machine prints what it
+            thinks it knows and probes the gateway, and its log is at{" "}
+            <Mono>{CONNECTOR_LOG_PATH}</Mono>.
+          </p>
+        </Step>
+      </ol>
+    </div>
+  );
+}
+
+function Step({
+  n,
+  title,
+  detail,
+  children,
+}: {
+  n: number;
+  title: string;
+  detail: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <li className="flex gap-3">
+      <span
+        aria-hidden="true"
+        className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-[var(--spx-border)] bg-[var(--spx-input-bg)] text-xs font-bold text-[var(--spx-text)]"
+      >
+        {n}
+      </span>
+      <div className="min-w-0 flex-1 space-y-2">
+        <h3 className="font-semibold text-[var(--spx-text)]">
+          <span className="sr-only">Step {n}: </span>
+          {title}
+        </h3>
+        <p className="text-sm leading-relaxed text-[var(--spx-text-secondary)]">{detail}</p>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * The download, or the truth about there not being one.
+ *
+ * There is deliberately no fallback URL and no "contact support" button that
+ * pretends to be a download. Until CONNECTOR_DOWNLOAD_URL is set, this shows
+ * exactly how the binary is produced from the repository, which is a thing
+ * that is true today, rather than a link that would 404 at first run.
+ */
+function DownloadStep({ origin }: { origin: string | null }) {
+  if (CONNECTOR_DOWNLOAD_URL) {
+    return (
+      <div className="space-y-2">
+        {/* No `download` attribute: browsers ignore it cross-origin anyway, and
+            the constant may point at a release page rather than the file. */}
+        <Button asChild size="sm" className="min-h-11 cursor-pointer">
+          <a href={CONNECTOR_DOWNLOAD_URL} rel="noopener noreferrer">
+            <Download className="mr-2 h-4 w-4" /> Download the connector for Windows
+          </a>
+        </Button>
+        <p className="text-xs text-[var(--spx-muted)]">
+          Run it once; it settles into the system tray and stays there.
+          {origin && (
+            <>
+              {" "}
+              If it asks for a workspace URL, use <Mono>{origin}</Mono>.
+            </>
+          )}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+      <p className="flex items-start gap-2 font-semibold">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        No published download yet
+      </p>
+      <p>
+        The connector is not yet on a public download page, so there is no link to give you here.
+        Ask your Rao-Tech contact for the signed Windows build — or, if you have the{" "}
+        <Mono>tally-connector</Mono> repository and Go 1.26+, build it on the Tally machine:
+      </p>
+      <pre className="overflow-x-auto rounded border border-amber-300 bg-[var(--spx-card)] p-2 font-mono text-xs text-[var(--spx-text)] dark:border-amber-500/40">
+        <code>{`go build -o bin/connector.exe ./cmd/connector
+.\\bin\\connector.exe${origin ? ` -cloud ${origin}` : ""}`}</code>
+      </pre>
+      <p className="flex items-start gap-2">
+        <Terminal className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          The first command produces the agent; the second starts it in the system tray. Add{" "}
+          <Mono>-run</Mono> instead to run it in a console with its log on screen, which is the
+          quickest way to see what it is doing.
+        </span>
+      </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ company */
+
+const STATUS_TONE: Record<string, keyof typeof TONE> = {
+  READY: "ok",
+  SYNCING: "warn",
+  ERROR: "bad",
+  UNSYNCED: "idle",
 };
 
 function CompanySection({
@@ -424,13 +894,14 @@ function CompanySection({
 }: {
   company: TallyCompany | null;
   paired: boolean;
-  busy: string | null;
-  setBusy: (b: "pair" | "save" | "master" | "test" | "revoke" | null) => void;
+  busy: Busy;
+  setBusy: (b: Busy) => void;
   onSaved: (company: TallyCompany) => void;
   onSyncMaster: () => void;
   onTestConnection: () => void;
 }) {
   const { toast } = useToast();
+  const now = useNow();
   const [name, setName] = useState(company?.companyName ?? "");
   const touched = useRef(false);
 
@@ -467,46 +938,55 @@ function CompanySection({
   const dirty = touched.current && name.trim() !== (company?.companyName ?? "");
 
   return (
-    <section className="rounded-xl border bg-white shadow-sm">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-gray-50/50 px-4 py-3">
-        <h2 className="font-semibold">Tally company</h2>
-        {company && (
-          <span
-            className={`rounded-full px-2 py-1 text-xs font-bold ${STATUS_TONE[company.status] ?? STATUS_TONE.UNSYNCED}`}
-          >
-            {company.status}
-          </span>
-        )}
-      </header>
-
+    <Section
+      title="Tally company"
+      aside={
+        company ? (
+          <Pill tone={STATUS_TONE[company.status] ?? "idle"}>{company.status}</Pill>
+        ) : null
+      }
+    >
       <div className="space-y-4 p-4">
         <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
           <div className="space-y-1.5">
-            <Label htmlFor="tally-company">Company name, exactly as it appears in Tally</Label>
+            <Label htmlFor="tally-company" className="text-[var(--spx-text)]">
+              Company name, exactly as it appears in Tally
+            </Label>
             <Input
               id="tally-company"
               value={name}
               placeholder="RAOTECH TRADERS"
+              aria-describedby="tally-company-help"
+              className="min-h-11"
               onChange={(e) => {
                 touched.current = true;
                 setName(e.target.value);
               }}
             />
-            <p className="text-xs text-gray-500">
+            <p id="tally-company-help" className="text-xs text-[var(--spx-muted)]">
               Tally addresses companies by name. A spelling that differs by so much as a double
               space is a different company as far as the import is concerned.
             </p>
           </div>
-          <Button size="sm" onClick={save} disabled={busy === "save" || !name.trim() || (!!company && !dirty)}>
-            {busy === "save" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+          <Button
+            size="sm"
+            className="min-h-11 cursor-pointer"
+            onClick={save}
+            disabled={busy === "save" || !name.trim() || (!!company && !dirty)}
+          >
+            {busy === "save" ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
             Save
           </Button>
         </div>
 
         {company && (
-          <dl className="grid gap-2 rounded-lg border bg-gray-50/60 p-3 text-sm sm:grid-cols-3">
+          <dl className="grid gap-2 rounded-lg border border-[var(--spx-border)] bg-[var(--spx-input-bg)] p-3 text-sm sm:grid-cols-3">
             <Row label="Ledgers" value={String(company.ledgerCount)} />
-            <Row label="Last synced" value={relativeTime(company.lastSyncedAt)} />
+            <Row label="Last synced" value={formatRelative(company.lastSyncedAt, now, "never")} />
             <Row
               label="Financial year"
               value={fyStart && fyEnd ? `${fyStart} — ${fyEnd}` : "unknown until first sync"}
@@ -515,7 +995,7 @@ function CompanySection({
         )}
 
         {company?.educationMode && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
               Tally is running in education mode. It rejects imports with an <em>empty</em> reason,
@@ -527,32 +1007,48 @@ function CompanySection({
         <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
-            className="bg-[#0b6b3a] hover:bg-[#0a5c32]"
+            className="min-h-11 cursor-pointer bg-[#0b6b3a] text-white hover:bg-[#0a5c32]"
             disabled={!company || !paired || busy === "master"}
             onClick={onSyncMaster}
           >
-            {busy === "master" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            {busy === "master" ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
             Sync Master
           </Button>
-          <Button size="sm" variant="outline" disabled={!paired || busy === "test"} onClick={onTestConnection}>
-            {busy === "test" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wifi className="mr-2 h-4 w-4" />}
+          <Button
+            size="sm"
+            variant="outline"
+            className="min-h-11 cursor-pointer"
+            disabled={!paired || busy === "test"}
+            onClick={onTestConnection}
+          >
+            {busy === "test" ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <Wifi className="mr-2 h-4 w-4" />
+            )}
             Test Connection
           </Button>
-          <p className="text-xs text-gray-500">
-            {paired
-              ? "Both are queued for the connector; it answers on its next poll."
-              : "Pair a device first — these run on the Tally machine, not here."}
+          <p role="status" aria-live="polite" className="text-xs text-[var(--spx-muted)]">
+            {busy === "master" || busy === "test"
+              ? "Queued — waiting for the connector to poll."
+              : paired
+                ? "Both are queued for the connector; it answers on its next poll."
+                : "Pair a device first — these run on the Tally machine, not here."}
           </p>
         </div>
 
         {company?.status !== "READY" && (
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-[var(--spx-muted)]">
             Vouchers cannot be pushed until master data has been read at least once: Tally matches
             ledgers by name, and the workspace has to know the names it will be matched against.
           </p>
         )}
       </div>
-    </section>
+    </Section>
   );
 }
 
@@ -566,27 +1062,30 @@ function Diagnostics({
   educationMode?: boolean;
 }) {
   const reachable = device.tallyReachable === true;
-  const port = device.tallyPort ?? 9000;
+  const port = device.tallyPort ?? DEFAULT_TALLY_PORT;
 
   return (
-    <section className="rounded-xl border bg-white shadow-sm">
-      <header className="border-b bg-gray-50/50 px-4 py-3">
-        <h2 className="font-semibold">Diagnostics</h2>
-      </header>
+    <Section title="Diagnostics">
       <div className="space-y-3 p-4 text-sm">
         <div className="flex items-start gap-2">
           {reachable ? (
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
           ) : (
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
           )}
           <div className="min-w-0 flex-1">
-            <p className={reachable ? "font-medium text-emerald-800" : "font-medium text-red-800"}>
+            <p
+              className={
+                reachable
+                  ? "font-medium text-emerald-700 dark:text-emerald-300"
+                  : "font-medium text-red-700 dark:text-red-300"
+              }
+            >
               {reachable ? "Tally is answering" : "The connector cannot reach Tally"}
             </p>
             {device.tallyMessage && (
               // Verbatim. Whatever the desktop saw is more useful than our summary of it.
-              <pre className="mt-1 whitespace-pre-wrap break-words rounded-lg border bg-slate-50 p-2 font-mono text-xs text-slate-800">
+              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--spx-border)] bg-[var(--spx-input-bg)] p-2 font-mono text-xs text-[var(--spx-text)]">
                 {device.tallyMessage}
               </pre>
             )}
@@ -594,11 +1093,11 @@ function Diagnostics({
         </div>
 
         {!reachable && (
-          <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-3 text-red-900">
+          <div className="space-y-2 rounded-lg border border-red-300 bg-red-50 p-3 text-red-900 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200">
             <p className="font-semibold">On the Tally machine</p>
             <ol className="list-decimal space-y-1 pl-5">
               <li>
-                <span className="font-mono text-xs">F1 → Settings → Connectivity → Client/Server Configuration</span>
+                <Mono>F1 → Settings → Connectivity → Client/Server Configuration</Mono>
               </li>
               <li>
                 TallyPrime acts as <strong>Both</strong>
@@ -607,36 +1106,40 @@ function Diagnostics({
                 Enable ODBC <strong>Yes</strong>
               </li>
               <li>
-                Port <strong>{port}</strong> — it must match the port the connector is configured with
+                Port <strong>{port}</strong> — it must match the port the connector is configured
+                with
               </li>
               <li>Restart Tally</li>
             </ol>
             <p className="pt-1">
-              Then confirm <span className="font-mono text-xs">tally.exe</span> is running{" "}
+              Then confirm <Mono>tally.exe</Mono> is running{" "}
               <strong>with the company loaded</strong>. A running{" "}
-              <span className="font-mono text-xs">tallygatewayserver.exe</span> is a different
-              component and is not enough on its own — the gateway answers only while the
-              application has the company open.
+              <Mono>tallygatewayserver.exe</Mono> is a different component and is not enough on its
+              own — the gateway answers only while the application has the company open.
             </p>
           </div>
         )}
 
         {educationMode && (
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-[var(--spx-muted)]">
             Education mode is also reported here because its rejections come back blank; if a push
             fails with no reason at all, check the licence first.
           </p>
         )}
       </div>
-    </section>
+    </Section>
   );
 }
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex justify-between gap-3">
-      <dt className="text-gray-400">{label}</dt>
-      <dd className={`text-right text-gray-900 ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
+      <dt className="text-[var(--spx-muted)]">{label}</dt>
+      <dd
+        className={`text-right text-[var(--spx-text)] ${mono ? "font-mono text-xs" : ""}`}
+      >
+        {value}
+      </dd>
     </div>
   );
 }

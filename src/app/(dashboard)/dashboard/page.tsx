@@ -9,6 +9,7 @@ import {
   Scale,
   XCircle,
   Clock,
+  CheckCircle2,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ export default async function Dashboard() {
     invoiceCount,
     draftCount,
     approvedCount,
+    postedCount,
     exportedCount,
     syncFailedCount,
     syncStuckCount,
@@ -167,10 +169,21 @@ export default async function Dashboard() {
           value={approvedCount.toString()}
           valueColor="#22c55e"
         />
+        {/* "In Tally" has to mean Tally. It used to count EXPORTED_DEMO too,
+            which is written the moment the XML file is downloaded — so a firm
+            that exported 400 vouchers and never ran the import in Tally was
+            told 400 were in their client's books. The real number comes from
+            VoucherSync; the merely-exported pile is still worth knowing, so it
+            stays as a subordinate line that says what it actually is. */}
         <StatCard
-          icon={<Download style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
+          icon={<CheckCircle2 style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
           label="In Tally"
-          value={exportedCount.toString()}
+          value={postedCount.toString()}
+          sub={
+            exportedCount > 0
+              ? `${exportedCount} exported to file, not confirmed in Tally`
+              : undefined
+          }
         />
         {/* The number this product exists to keep at zero. Previously it was
             reachable only by opening Transactions and ticking a filter you
@@ -478,6 +491,7 @@ function StatCard({
   icon,
   label,
   value,
+  sub,
   valueColor,
   href,
   alert = false,
@@ -485,6 +499,10 @@ function StatCard({
   icon: React.ReactNode;
   label: string;
   value: string;
+  /** A smaller, quieter second fact about the same card. Deliberately not a
+   *  second headline: anything shown at the size of `value` reads as another
+   *  number the user is meant to act on. */
+  sub?: string;
   bg?: string;
   valueColor?: string;
   href?: string;
@@ -529,7 +547,29 @@ function StatCard({
       >
         {value}
       </p>
+      {sub && (
+        <p
+          style={{
+            fontSize: "11px",
+            color: "var(--spx-muted)",
+            letterSpacing: "0.3px",
+            lineHeight: 1.4,
+            marginTop: "8px",
+          }}
+        >
+          {sub}
+        </p>
+      )}
     </div>
   );
-  return href ? <Link href={href}>{card}</Link> : card;
+  return href ? (
+    <Link
+      href={href}
+      className="block cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--spx-text)]"
+    >
+      {card}
+    </Link>
+  ) : (
+    card
+  );
 }

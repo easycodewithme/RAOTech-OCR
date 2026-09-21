@@ -99,7 +99,10 @@ export default function SheetWizard({
   const [preview, setPreview] = useState<MappingResponse | null>(null);
 
   const [templateName, setTemplateName] = useState("");
-  const [committed, setCommitted] = useState<{ count: number } | null>(null);
+  const [committed, setCommitted] = useState<{
+    count: number;
+    warnings?: { message: string; rows: number }[];
+  } | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
 
   const headers = uploaded?.headers ?? [];
@@ -155,7 +158,7 @@ export default function SheetWizard({
       const res = await commitUpload(uploaded.upload.id, (done, left) =>
         setProgress(`${done} created${left ? `, ${left} to go` : ""}…`)
       );
-      setCommitted({ count: res.committed });
+      setCommitted({ count: res.committed, warnings: res.warnings });
       if (templateName.trim()) {
         await saveTemplate({
           name: templateName.trim(),
@@ -203,6 +206,35 @@ export default function SheetWizard({
           They are ordinary vouchers now — review and approve them, then push to Tally.
           Nothing has reached your books yet.
         </p>
+
+        {/*
+          Shown here rather than swallowed, because this is the last moment the
+          user is still thinking about the sheet. The important one is an item
+          name matching no stock master: those lines post as ordinary ledger
+          entries and move no stock in Tally, and nothing later in the product
+          can detect that it happened.
+        */}
+        {!!committed.warnings?.length && (
+          <div
+            role="status"
+            className="mt-6 space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-left"
+          >
+            <div className="flex items-center gap-2 text-sm font-medium text-amber-300">
+              <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+              Worth checking before you approve
+            </div>
+            <ul className="space-y-1.5">
+              {committed.warnings.map((w) => (
+                <li key={w.message} className="text-sm text-muted-foreground">
+                  {w.message}{" "}
+                  <span className="whitespace-nowrap text-xs text-amber-400/80">
+                    ({w.rows} row{w.rows === 1 ? "" : "s"})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="mt-8 flex justify-center gap-3">
           <Link href="/transactions">
             <Button>Go to Transactions</Button>

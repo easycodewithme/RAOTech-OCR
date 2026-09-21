@@ -324,11 +324,20 @@ export default function LandingPage() {
           </nav>
 
           <div className="ml-auto">
-           <Link href="/pricing">
-  <Button className="rounded-none bg-primary text-primary-foreground hover:bg-primary/90">
-    Login / Register
-  </Button>
-</Link>
+            {/*
+              Goes to the app, not to the price list. A button labelled
+              "Login / Register" that lands on /pricing is a dead end twice
+              over: nothing in this product gates on `User.plan`, so there is
+              nothing to buy before signing in, and the checkout it offers
+              cannot complete without Razorpay keys. /dashboard is the right
+              target for both states — the proxy sends a signed-out visitor to
+              Clerk and back here afterwards, and a signed-in one straight in.
+            */}
+            <Link href="/dashboard">
+              <Button className="rounded-none bg-primary text-primary-foreground hover:bg-primary/90">
+                Login / Register
+              </Button>
+            </Link>
           </div>
         </div>
       </header>

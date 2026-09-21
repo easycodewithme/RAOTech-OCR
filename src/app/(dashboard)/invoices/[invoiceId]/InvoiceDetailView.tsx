@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +16,7 @@ import {
   FileText,
   Trash2,
   Pencil,
+  X,
 } from "lucide-react";
 
 type Invoice = {
@@ -45,11 +47,15 @@ type Invoice = {
   updatedAt: string;
 };
 
+/** A refused write, with enough detail to act on rather than just acknowledge. */
+type Failure = { message: string; code?: string; voucherId?: string };
+
 export default function InvoiceDetailView({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
   const [editData, setEditData] = useState(invoice.extractedData || {});
 
   const items: any[] = invoice.items || invoice.extractedData?.items || [];
@@ -61,8 +67,33 @@ export default function InvoiceDetailView({ invoice }: { invoice: Invoice }) {
     return `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
   };
 
+  /**
+   * Read the reason out of a failed response.
+   *
+   * Both handlers below used to test `res.ok` and do nothing else, so a refusal
+   * looked exactly like a successful no-op: the spinner stopped, the row stayed,
+   * and the user was told nothing. That was survivable while the only failures
+   * were 500s. It stopped being survivable when the invoice routes started
+   * answering 409 `VOUCHER_IN_TALLY` — the one refusal a user must see, because
+   * it means the voucher is in a client's live books and the fix is to remove it
+   * from Tally first.
+   */
+  const readFailure = async (res: Response): Promise<Failure> => {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+      voucherId?: string;
+    };
+    return {
+      message: body.error?.trim() || `That did not go through (${res.status}).`,
+      code: body.code,
+      voucherId: body.voucherId,
+    };
+  };
+
   const handleSave = async () => {
     setSaving(true);
+    setFailure(null);
     try {
       const res = await fetch(`/api/invoices/${invoice.id}`, {
         method: "PATCH",
@@ -72,24 +103,29 @@ export default function InvoiceDetailView({ invoice }: { invoice: Invoice }) {
       if (res.ok) {
         setIsEditing(false);
         router.refresh();
+      } else {
+        setFailure(await readFailure(res));
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
+      setFailure({ message: "Could not reach the server. Check your connection and try again." });
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!confirm("Are you sure you want to delete this invoice?")) return;
+    if (!confirm("Delete this invoice? Its draft voucher goes with it.")) return;
     setDeleting(true);
+    setFailure(null);
     try {
       const res = await fetch(`/api/invoices/${invoice.id}`, { method: "DELETE" });
       if (res.ok) {
         router.push("/dashboard");
+      } else {
+        setFailure(await readFailure(res));
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
+      setFailure({ message: "Could not reach the server. Check your connection and try again." });
     } finally {
       setDeleting(false);
     }
@@ -144,6 +180,34 @@ export default function InvoiceDetailView({ invoice }: { invoice: Invoice }) {
           )}
         </div>
       </div>
+
+      {/* A refusal the user can act on, not a spinner that quietly stops. */}
+      {failure && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-xl border border-red-500/35 bg-red-500/[0.06] p-4 text-sm"
+        >
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden="true" />
+          <div className="space-y-2">
+            <p className="text-[var(--spx-text)]">{failure.message}</p>
+            {failure.code === "VOUCHER_IN_TALLY" && failure.voucherId && (
+              <Link
+                href={`/vouchers/${failure.voucherId}`}
+                className="inline-flex items-center gap-1 font-medium text-red-400 underline underline-offset-2 transition-colors hover:text-red-300"
+              >
+                Open the voucher to remove it from Tally first
+              </Link>
+            )}
+          </div>
+          <button
+            onClick={() => setFailure(null)}
+            aria-label="Dismiss this message"
+            className="ml-auto cursor-pointer rounded p-1 text-[var(--spx-muted)] transition-colors hover:text-[var(--spx-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       {/* Status & GST Badges */}
       <div className="flex flex-wrap gap-3">
@@ -244,7 +308,7 @@ export default function InvoiceDetailView({ invoice }: { invoice: Invoice }) {
                     <td className="px-4 py-3 text-gray-400">{i + 1}</td>
                     <td className="px-4 py-3 font-medium">{item.name || item.description || "-"}</td>
                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">{item.hsn_code || "-"}</td>
-                    <td className="px-4 py-3 text-right">{item.qty ?? "-"}</td>
+                    <td className="px-4 py-3 text-right">{item.qty || "-"}</td>
                     <td className="px-4 py-3 text-right">{item.rate != null ? formatCurrency(item.rate) : "-"}</td>
                     <td className="px-4 py-3 text-right font-semibold">
                       {formatCurrency(item.price || item.amount)}

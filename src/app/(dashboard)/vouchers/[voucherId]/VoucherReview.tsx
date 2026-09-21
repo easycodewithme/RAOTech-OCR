@@ -8,6 +8,7 @@ import { TallySyncOverlay } from "@/components/TallySyncOverlay";
 import { TallySyncBadge } from "@/components/TallySyncBadge";
 import { useTallyPush, useVoucherSyncs } from "@/components/tallyClient";
 import { useToast } from "@/components/Toast";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ArrowLeft, Save, AlertTriangle, Send, CheckCircle2, Download } from "lucide-react";
 
 interface Line {
@@ -101,6 +102,29 @@ export default function VoucherReview({
   });
   const [status, setStatus] = useState(initial.status);
   const firstUnmappedRef = useRef<LedgerSelectHandle | null>(null);
+  /**
+   * Ledger picks that exist only in this component's state.
+   *
+   * `setLineLedger` deliberately stays local so typing feels instant, which
+   * means the browser is the only place those picks live until a save lands.
+   * Everything that can throw them away — j/k, a reload, a closed tab — has to
+   * consult this first.
+   */
+  const [dirty, setDirty] = useState(false);
+  /**
+   * Monotonic count of local edits. `dirty` is derived from it rather than
+   * flipped blindly, so an edit made *while* a save is in flight is not
+   * swallowed by that save reporting success for the older snapshot.
+   */
+  const editRevRef = useRef(0);
+  /**
+   * The same problem one stage earlier. Kept separate from `dirty` because it
+   * cannot be fixed the same way: saving item names also writes
+   * `item_name_mapping_complete`, and pressing `j` is not the user saying the
+   * item review is done — so this one has to warn where `dirty` can just save.
+   */
+  const [itemNamesDirty, setItemNamesDirty] = useState(false);
+  const [confirmPush, setConfirmPush] = useState(false);
 
   // Where Tally stands on this voucher. The server page does not carry it, and
   // it changes while the screen is open, so it is read here.
@@ -148,18 +172,41 @@ export default function VoucherReview({
           : l
       )
     );
+    editRevRef.current += 1;
+    setDirty(true);
   }
 
-  function persistLinesInBackground(current: Line[] = lines) {
-    fetch(`/api/vouchers/${initial.id}`, {
+  /**
+   * Write the ledger mapping to the database, and wait for it.
+   *
+   * This was fire-and-forget with an empty `.catch()`. That is right for the
+   * local state — the optimistic update above is what makes typing feel
+   * instant — and wrong for everything downstream of it, because the Tally XML
+   * is built server-side *from the row*. A push that started before the PATCH
+   * landed posted the ledger this screen had already stopped showing, into a
+   * client's live books; a PATCH that failed outright said nothing at all.
+   *
+   * So it throws. Every caller has to decide, and none of them may approve,
+   * push, export or navigate away on a mapping the server has not got.
+   */
+  async function persistLines(current: Line[] = lines) {
+    const rev = editRevRef.current;
+    const res = await fetch(`/api/vouchers/${initial.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lines: current.map((l) => ({ id: l.id, ledgerId: l.ledgerId })) }),
-    }).catch(() => {});
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Could not save the ledger mapping (${res.status})`);
+    }
+    // Only claim clean for the snapshot actually sent.
+    if (editRevRef.current === rev) setDirty(false);
   }
 
   function updateItemName(index: number, nextName: string) {
     setItemNames((prev) => prev.map((value, i) => (i === index ? nextName : value)));
+    setItemNamesDirty(true);
   }
 
   function buildPersistedExtractedData() {
@@ -175,7 +222,10 @@ export default function VoucherReview({
   }
 
   async function persistItemNames() {
-    if (!invoiceId || !extractedItems.length) return;
+    if (!invoiceId || !extractedItems.length) {
+      setItemNamesDirty(false);
+      return;
+    }
 
     const res = await fetch(`/api/invoices/${invoiceId}`, {
       method: "PATCH",
@@ -186,6 +236,7 @@ export default function VoucherReview({
     if (!res.ok) {
       throw new Error(data.error || "Failed to save item names");
     }
+    setItemNamesDirty(false);
   }
 
   async function changeType(next: string) {
@@ -214,7 +265,7 @@ export default function VoucherReview({
     (async () => {
       try {
         await persistItemNames();
-        persistLinesInBackground();
+        await persistLines();
         setSavedFlash(true);
         toast("Mapping saved", "success");
         window.setTimeout(() => setSavedFlash(false), 1500);
@@ -249,12 +300,46 @@ export default function VoucherReview({
     return true;
   }
 
+  /**
+   * Save the mapping, wait for it, and only then report whether the caller may
+   * carry on. Failure is loud and stops the caller dead: silently continuing is
+   * how the old ledger ended up in somebody's books.
+   */
+  async function saveBeforeAction(consequence: string): Promise<boolean> {
+    setSaving(true);
+    try {
+      await persistLines();
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not save the ledger mapping";
+      setError(message);
+      toast(`${message} — ${consequence}`, "error");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * Open the confirm for approve-and-push. Both the floating button and the `A`
+   * shortcut come through here, so the two cannot drift apart.
+   */
+  function requestApproveAndPush() {
+    if (stage === "items" || hasUnmapped || !balanced || locked || saving) return;
+    if (push.state.phase !== "idle") return;
+    setConfirmPush(true);
+  }
+
   /** Approve, then hand the voucher to the connector. The overlay follows the
-   *  real sync row from here on — there is no timer anywhere in this path. */
+   *  real sync row from here on — there is no timer anywhere in this path.
+   *
+   *  The order matters and is not incidental: the XML is assembled server-side
+   *  from the voucher row, so the mapping must be in the database before the
+   *  push is enqueued, and a failed save must stop the whole thing. */
   async function approveAndPush() {
     if (stage === "items" || hasUnmapped || !balanced) return;
     setError(null);
-    persistLinesInBackground();
+    if (!(await saveBeforeAction("nothing was pushed to Tally."))) return;
     if (!(await approve())) return;
     await push.start([initial.id]);
   }
@@ -263,7 +348,9 @@ export default function VoucherReview({
   async function downloadXml() {
     if (hasUnmapped || !balanced) return;
     setError(null);
-    persistLinesInBackground();
+    // Same ordering hazard as the push: the route reads the lines back out of
+    // the database to build the file.
+    if (!(await saveBeforeAction("no file was written."))) return;
     try {
       const res = await fetch("/api/export/tally", {
         method: "POST",
@@ -289,15 +376,71 @@ export default function VoucherReview({
     }
   }
 
-  // Keyboard shortcuts: A approve, J/K nav, E edit first unmapped, S save
+  /**
+   * j/k navigation.
+   *
+   * The whole review loop is built around these two keys, which made the
+   * fastest way to work also the only way to lose a mapping: `setLineLedger`
+   * is local-only and `router.push` took the component down with it. Since the
+   * save already exists, the honest fix is to run it rather than to nag — and
+   * if it fails, stay put instead of discarding the work quietly.
+   */
+  async function navigateToVoucher(id: string) {
+    if (itemNamesDirty) {
+      toast("Save the item names first — press S. They are not stored yet.", "error");
+      return;
+    }
+    if (dirty && !(await saveBeforeAction("stayed on this voucher so nothing is lost."))) return;
+    router.push(`/vouchers/${id}`);
+  }
+
+  /**
+   * A reload or a closed tab takes unsaved picks with it — nothing is drafted
+   * anywhere. Registered only while there is something to lose, so a clean
+   * screen never makes anyone dismiss a "leave site?" prompt, and torn down in
+   * the effect's own cleanup so it can never outlive the state it speaks for.
+   */
+  useEffect(() => {
+    if (!dirty && !itemNamesDirty) return;
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      // Older browsers only show the prompt if returnValue is set; the string
+      // itself has been ignored by every browser for years.
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty, itemNamesDirty]);
+
+  // Keyboard shortcuts: A approve (via confirm), J/K nav, E edit first unmapped, S save
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)
+      // While the confirm is up it owns the keyboard: `j` behind an open modal
+      // would navigate the page out from under the question being asked.
+      if (confirmPush) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable
+      )
         return;
+      // A held modifier means the user is typing a browser or OS shortcut, not
+      // ours. `isComposing` means an IME is mid-word: a Devanagari or Japanese
+      // keyboard emits a keydown for every letter being composed, and one of
+      // them is `a`.
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.isComposing) return;
+
       const key = e.key.toLowerCase();
       if (key === "a" && !locked && stage === "ledger") {
         e.preventDefault();
-        void approveAndPush();
+        // Not a direct call any more. `a` posts to a client's live books and
+        // cannot be undone from this screen, and LedgerSelect closes by
+        // dropping focus back to <body> — which is precisely the moment after
+        // picking a ledger, when a stray `a` would have fired. It now opens
+        // the same confirm the button opens.
+        requestApproveAndPush();
       } else if (key === "s") {
         e.preventDefault();
         void saveCurrentStep();
@@ -306,16 +449,29 @@ export default function VoucherReview({
         firstUnmappedRef.current?.focusOpen();
       } else if (key === "j" && nextId) {
         e.preventDefault();
-        router.push(`/vouchers/${nextId}`);
+        void navigateToVoucher(nextId);
       } else if (key === "k" && prevId) {
         e.preventDefault();
-        router.push(`/vouchers/${prevId}`);
+        void navigateToVoucher(prevId);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked, hasUnmapped, balanced, nextId, prevId, lines]);
+  }, [
+    locked,
+    hasUnmapped,
+    balanced,
+    nextId,
+    prevId,
+    lines,
+    stage,
+    dirty,
+    itemNamesDirty,
+    saving,
+    confirmPush,
+    push.state.phase,
+  ]);
 
   return (
     <div className="p-6 md:p-10 space-y-6 relative min-h-screen">
@@ -324,17 +480,36 @@ export default function VoucherReview({
           <ArrowLeft className="mr-2 h-4 w-4" /> Transactions
         </Button>
         <div className="flex items-center gap-3">
-          <span className="hidden md:inline text-xs text-gray-400">Shortcuts: A approve · E edit · J/K next/prev · S save</span>
+          <span className="hidden md:inline text-xs text-gray-400">
+            Shortcuts: A approve (asks first) · E edit · J/K next/prev · S save
+          </span>
+          {(dirty || itemNamesDirty) && !locked && (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+              <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+              Unsaved changes
+            </span>
+          )}
           <TallySyncBadge sync={sync} />
           {locked && !sync && (
             <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-semibold bg-sky-100 text-sky-700">
               <CheckCircle2 className="h-4 w-4" /> Exported XML
             </span>
           )}
-          <Button variant="outline" onClick={downloadXml} disabled={hasUnmapped || !balanced}>
+          <Button
+            variant="outline"
+            className="cursor-pointer"
+            onClick={downloadXml}
+            disabled={hasUnmapped || !balanced || saving}
+            aria-label="Download this voucher as Tally XML"
+          >
             <Download className="mr-2 h-4 w-4" /> XML
           </Button>
-          <Button variant="outline" onClick={saveCurrentStep} disabled={locked || saving}>
+          <Button
+            variant="outline"
+            className="cursor-pointer"
+            onClick={saveCurrentStep}
+            disabled={locked || saving}
+          >
             {savedFlash ? <CheckCircle2 className="mr-2 h-4 w-4 text-emerald-600" /> : <Save className="mr-2 h-4 w-4" />}
             {savedFlash ? "Saved" : stage === "items" ? "Save item names" : "Save mapping"}
           </Button>
@@ -571,15 +746,16 @@ export default function VoucherReview({
 
       {stage === "ledger" && (
         <button
-          onClick={approveAndPush}
+          type="button"
+          onClick={requestApproveAndPush}
           disabled={hasUnmapped || !balanced || saving || locked || push.state.phase !== "idle"}
-          className={`fixed bottom-6 left-6 md:left-[19.5rem] z-40 inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold shadow-lg transition
+          className={`fixed bottom-6 left-6 md:left-[19.5rem] z-40 inline-flex min-h-[44px] items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold shadow-lg transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0b6b3a]
             ${
               locked
                 ? "bg-emerald-600 text-white cursor-default"
                 : hasUnmapped || !balanced
                   ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                  : "bg-[#0b6b3a] text-white hover:bg-[#0a5c32] hover:shadow-xl"
+                  : "cursor-pointer bg-[#0b6b3a] text-white hover:bg-[#0a5c32] hover:shadow-xl"
             }`}
         >
           {locked ? <CheckCircle2 className="h-4 w-4" /> : <Send className="h-4 w-4" />}
@@ -592,6 +768,31 @@ export default function VoucherReview({
         labels={{ [initial.id]: `${inv.vendor ?? "Voucher"} · ${inv.invoiceNumber ?? initial.id.slice(0, 8)}` }}
         onClose={() => void refreshSyncs()}
       />
+
+      {/* The one gate on the only action here that reaches outside this app.
+          Both the button and the `A` shortcut open it, so there is exactly one
+          way for a voucher to leave for Tally. */}
+      {confirmPush && (
+        <ConfirmDialog
+          title="Approve and push this voucher to Tally?"
+          body={
+            <>
+              This writes {inv.vendor ? <strong>{inv.vendor}</strong> : "this voucher"}
+              {inv.invoiceNumber ? ` · ${inv.invoiceNumber}` : ""} into the client&apos;s books on
+              the connected machine, for {money(totalDebit)}. The mapping on screen is saved first,
+              since the XML is built from what the server holds. It cannot be undone from this
+              screen — a posted voucher has to be deleted from Tally, on Transactions.
+            </>
+          }
+          confirmLabel="Approve & push"
+          busy={saving || push.state.phase !== "idle"}
+          onConfirm={() => {
+            setConfirmPush(false);
+            void approveAndPush();
+          }}
+          onCancel={() => setConfirmPush(false)}
+        />
+      )}
     </div>
   );
 }

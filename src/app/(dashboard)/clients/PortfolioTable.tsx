@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Clock, Loader2, Send, CheckCircle2 } from "lucide-react";
 import type { PortfolioRow } from "@/lib/portfolio";
 import { attentionRank } from "@/lib/portfolio";
+import { formatCount, formatDate, formatRelative } from "@/lib/format";
 
 /**
  * One row per client, and one sentence per row saying what is wrong.
@@ -18,9 +19,14 @@ import { attentionRank } from "@/lib/portfolio";
  * screen is scoped to the switcher. Landing on a client's dashboard without
  * switching would show the previous client's data under the new client's name,
  * which is the kind of wrong that gets into someone's books.
+ *
+ * The switch is offered by a real <button> in the first cell rather than by
+ * ARIA bolted onto the <tr>. The row keeps its click handler because a whole
+ * row is an easier mouse target, but the button is what carries the tab stop,
+ * the focus ring and the accessible name — a table row given role="button"
+ * stops being a row to a screen reader, which costs the reader the column
+ * headers that make the numbers beside it mean anything.
  */
-
-const money = (n: number) => n.toLocaleString("en-IN");
 
 function verdict(r: PortfolioRow): { text: string; tone: "bad" | "warn" | "todo" | "ok" } {
   if (r.failedCount > 0) {
@@ -62,16 +68,33 @@ const TONE: Record<string, { color: string; bg: string; border: string }> = {
   ok: { color: "var(--spx-muted)", bg: "transparent", border: "var(--spx-border)" },
 };
 
-function ago(d: Date | string | null): string {
-  if (!d) return "never";
-  const then = new Date(d).getTime();
-  const mins = Math.floor((Date.now() - then) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return days < 30 ? `${days}d ago` : new Date(d).toISOString().slice(0, 10);
+/**
+ * CLOCK — "4h ago" is a value that changes on its own, so it is subscribed to
+ * rather than computed while rendering.
+ *
+ * Two things fall out of that. The server has no useful clock for this — the
+ * string it produces would already be stale by the time the browser hydrates,
+ * which is a hydration mismatch — so it renders `null` and the row falls back
+ * to an absolute date until mount. And the snapshot is rounded down to the
+ * minute: `Date.now()` returns a new number on every read, which
+ * useSyncExternalStore treats as a changed store and re-renders forever.
+ *
+ * One shared value per render also stops two clients synced in the same second
+ * from reading "59m ago" and "1h ago" because the minute turned between rows.
+ */
+const MINUTE_MS = 60_000;
+
+function subscribeToMinute(onStoreChange: () => void) {
+  const tick = window.setInterval(onStoreChange, MINUTE_MS);
+  return () => window.clearInterval(tick);
+}
+
+function getMinuteNow() {
+  return Math.floor(Date.now() / MINUTE_MS) * MINUTE_MS;
+}
+
+function getMinuteOnServer() {
+  return null;
 }
 
 export default function PortfolioTable({
@@ -85,6 +108,10 @@ export default function PortfolioTable({
   const [switching, setSwitching] = useState<string | null>(null);
 
   async function open(clientId: string) {
+    // The row and the button inside it can both fire for one click, and the
+    // button stays enabled while switching so focus is not thrown to <body>
+    // mid-navigation. Both make re-entry possible, so it is guarded here.
+    if (switching) return;
     if (clientId === activeClientId) return router.push("/dashboard");
     setSwitching(clientId);
     try {
@@ -107,6 +134,13 @@ export default function PortfolioTable({
   }
 
   const needing = rows.filter((r) => attentionRank(r) <= 2).length;
+
+  // See CLOCK above. null on the server, a minute-stable timestamp after mount.
+  const now = useSyncExternalStore<number | null>(
+    subscribeToMinute,
+    getMinuteNow,
+    getMinuteOnServer
+  );
 
   if (!rows.length) {
     return (
@@ -143,12 +177,24 @@ export default function PortfolioTable({
         <table className="w-full text-sm">
           <thead className="bg-[var(--spx-input-bg)] text-left text-[var(--spx-muted)]">
             <tr>
-              <th className="px-4 py-2.5 font-medium">Client</th>
-              <th className="px-4 py-2.5 font-medium">Status</th>
-              <th className="px-4 py-2.5 text-right font-medium">Drafts</th>
-              <th className="px-4 py-2.5 text-right font-medium">Ready</th>
-              <th className="px-4 py-2.5 text-right font-medium">In Tally</th>
-              <th className="px-4 py-2.5 font-medium">Last sync</th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Client
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Status
+              </th>
+              <th scope="col" className="px-4 py-2.5 text-right font-medium">
+                Drafts
+              </th>
+              <th scope="col" className="px-4 py-2.5 text-right font-medium">
+                Ready
+              </th>
+              <th scope="col" className="px-4 py-2.5 text-right font-medium">
+                In Tally
+              </th>
+              <th scope="col" className="px-4 py-2.5 font-medium">
+                Last sync
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -159,11 +205,24 @@ export default function PortfolioTable({
                 <tr
                   key={r.clientId}
                   onClick={() => void open(r.clientId)}
-                  className="cursor-pointer border-t border-[var(--spx-border)] transition hover:bg-[var(--spx-card-hover)]"
+                  // has-[:focus-visible] mirrors the hover highlight when the
+                  // row's button is reached by keyboard, so a tabbing user sees
+                  // the same "this row" cue a mouse user gets.
+                  className="cursor-pointer border-t border-[var(--spx-border)] transition duration-150 hover:bg-[var(--spx-card-hover)] has-[button:focus-visible]:bg-[var(--spx-card-hover)] motion-reduce:transition-none"
                   style={{ background: v.tone === "bad" ? tone.bg : undefined }}
                 >
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2 font-medium text-[var(--spx-text)]">
+                    <button
+                      type="button"
+                      // The row handler would otherwise fire for the same click.
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void open(r.clientId);
+                      }}
+                      aria-label={`Switch to ${r.clientName} — ${v.text}`}
+                      aria-busy={switching === r.clientId || undefined}
+                      className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md text-left font-medium text-[var(--spx-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)]"
+                    >
                       {r.clientName}
                       {r.clientId === activeClientId && (
                         <span className="rounded border border-[var(--spx-border)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--spx-muted)]">
@@ -171,9 +230,12 @@ export default function PortfolioTable({
                         </span>
                       )}
                       {switching === r.clientId && (
-                        <Loader2 className="size-3.5 animate-spin text-[var(--spx-muted)]" />
+                        <Loader2
+                          className="size-3.5 animate-spin text-[var(--spx-muted)] motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
                       )}
-                    </div>
+                    </button>
                     <div className="mt-0.5 text-xs text-[var(--spx-muted)]">
                       {r.tallyCompany ? (
                         r.tallyCompany
@@ -195,16 +257,18 @@ export default function PortfolioTable({
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right text-[var(--spx-muted)]">
-                    {r.draftCount ? money(r.draftCount) : "—"}
+                    {r.draftCount ? formatCount(r.draftCount) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right text-[var(--spx-muted)]">
-                    {r.readyCount ? money(r.readyCount) : "—"}
+                    {r.readyCount ? formatCount(r.readyCount) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right text-[var(--spx-muted)]">
-                    {r.postedCount ? money(r.postedCount) : "—"}
+                    {r.postedCount ? formatCount(r.postedCount) : "—"}
                   </td>
                   <td className="px-4 py-3 text-xs text-[var(--spx-muted)]">
-                    {ago(r.lastSyncedAt)}
+                    {now === null
+                      ? formatDate(r.lastSyncedAt, "never")
+                      : formatRelative(r.lastSyncedAt, now, "never")}
                   </td>
                 </tr>
               );
@@ -214,7 +278,7 @@ export default function PortfolioTable({
       </div>
 
       <p className="text-xs text-[var(--spx-muted)]">
-        Clicking a client switches the whole app to it.
+        Clicking a client — or pressing Enter on its name — switches the whole app to it.
       </p>
     </div>
   );

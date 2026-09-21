@@ -70,6 +70,12 @@ export interface CommitResponse {
   skipped: number;
   remaining: number;
   failures: { row: number; message: string }[];
+  /**
+   * Things that went through but probably should not have — most importantly an
+   * item name matching no stock master, which posts as a plain ledger line and
+   * moves no stock without saying so. Counted by how many rows hit each one.
+   */
+  warnings: { message: string; rows: number }[];
   message: string;
 }
 
@@ -124,12 +130,28 @@ export async function commitUpload(
   uploadId: string,
   onProgress?: (committed: number, remaining: number) => void
 ): Promise<CommitResponse> {
+  // Warnings accumulate across batches. Only the final response is returned,
+  // so without this a warning raised on row 3 of a 900-row sheet would be
+  // discarded the moment the second batch started — and the rows it was about
+  // would be exactly the ones already committed.
+  const totals = new Map<string, number>();
+
   for (;;) {
     const res = await asJson<CommitResponse>(
       await fetch(`/api/excel/uploads/${uploadId}/commit`, { method: "POST" })
     );
+    for (const w of res.warnings ?? []) {
+      totals.set(w.message, (totals.get(w.message) ?? 0) + w.rows);
+    }
     onProgress?.(res.committed, res.remaining);
-    if (res.done) return res;
+    if (res.done) {
+      return {
+        ...res,
+        warnings: [...totals.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([message, rows]) => ({ message, rows })),
+      };
+    }
   }
 }
 
