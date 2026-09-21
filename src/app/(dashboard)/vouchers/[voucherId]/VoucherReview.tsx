@@ -713,6 +713,7 @@ export default function VoucherReview({
                                   ledgers={ledgers}
                                   value={l.ledgerId}
                                   role={l.role}
+                                  voucherType={voucherType}
                                   onChange={(id) => setLineLedger(l.id, id)}
                                   onCreated={(led) => setLedgers((prev) => [...prev, led])}
                                 />
