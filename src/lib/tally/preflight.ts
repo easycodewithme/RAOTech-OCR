@@ -107,14 +107,34 @@ export function preflightVouchers(
       }
     }
 
-    // "No accounting allocation" — Changed to warning so it does NOT block push
+    /**
+     * A voucher with nothing on it. Blocking, and it has to stay blocking.
+     *
+     * This was downgraded to a warning at some point so it would not stop a
+     * push. What that actually bought was a voucher Tally rejects every time
+     * — there is no accounting entry to post — reported back as
+     * `Voucher date is missing`, which is Tally's message for a malformed
+     * voucher and sends whoever reads it looking at the date. Measured on this
+     * database: every VoucherSync in FAILED was an empty voucher, all five
+     * carrying that message, while every healthy voucher in the queue posted.
+     *
+     * Letting it through does not make the push succeed. It converts a clear
+     * local sentence into a misleading remote one, which is the exact trade
+     * this file exists to prevent.
+     *
+     * It also escapes UNBALANCED below, because that check is guarded on
+     * `live.length > 0` — an empty voucher balances: zero equals zero.
+     */
     const live = v.lines.filter((l) => l.debit > EPSILON || l.credit > EPSILON);
     if (live.length === 0) {
       issues.push({
         voucherId: v.id,
         code: "NO_ALLOCATION",
-        severity: "warning", // ← WARNING (Does not block push)
-        message: "Every line is zero, so the voucher has no accounting allocation.",
+        severity: "error",
+        message:
+          v.lines.length === 0
+            ? "This voucher has no lines at all, so there is nothing to post. Tally rejects it as a malformed voucher and reports a missing date."
+            : "Every line is zero, so the voucher has no accounting allocation and Tally has nothing to post.",
       });
     }
 

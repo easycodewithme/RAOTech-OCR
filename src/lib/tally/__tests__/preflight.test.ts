@@ -97,6 +97,25 @@ describe("preflight — 'No accounting allocation'", () => {
     });
     expect(codes([v])).not.toContain("UNBALANCED");
   });
+
+  it("flags a voucher with no lines at all", () => {
+    expect(codes([voucher({ lines: [] })])).toContain("NO_ALLOCATION");
+  });
+
+  /**
+   * Pinned because it was silently downgraded once already, and the symptom
+   * was a long way from the cause: Tally answers an empty voucher with
+   * "Voucher date is missing", so the failure reads as a date problem on a
+   * voucher whose date is fine. Every push route blocks on
+   * `severity === "error"` and on nothing else, so this one word is the whole
+   * guard.
+   */
+  it("blocks rather than warns — an empty voucher can never post", () => {
+    for (const v of [voucher({ lines: [] }), voucher({ lines: [{ ledgerName: "Purchase", debit: 0, credit: 0 }] })]) {
+      const issue = preflightVouchers([v]).find((i) => i.code === "NO_ALLOCATION");
+      expect(issue?.severity).toBe("error");
+    }
+  });
 });
 
 describe("preflight — balance", () => {
