@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 36" width="172" height="36" fill="none">
+  <!-- 4 Colored Zoho Blocks -->
+  <g transform="translate(2, 6)">
+    <!-- Red Block Z -->
+    <rect x="0" y="0" width="24" height="24" rx="4.5" fill="#e53935" />
+    <path d="M6.5 7.5 H17.5 L9 16.5 H17.5 V18.5 H6.5 L15 9.5 H6.5 Z" fill="#ffffff" />
+
+    <!-- Green Block O -->
+    <rect x="28" y="0" width="24" height="24" rx="4.5" fill="#43a047" />
+    <circle cx="40" cy="12" r="6" stroke="#ffffff" stroke-width="2.2" fill="none" />
+
+    <!-- Blue Block H -->
+    <rect x="56" y="0" width="24" height="24" rx="4.5" fill="#1e88e5" />
+    <path d="M62.5 6.5 H65 V10.5 H71.5 V6.5 H74 V17.5 H71.5 V13 H65 V17.5 H62.5 Z" fill="#ffffff" />
+
+    <!-- Yellow Block O -->
+    <rect x="84" y="0" width="24" height="24" rx="4.5" fill="#fbc02d" />
+    <circle cx="96" cy="12" r="6" stroke="#ffffff" stroke-width="2.2" fill="none" />
+  </g>
+  <!-- Books Text -->
+  <text x="117" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="700" fill="#1e293b" letter-spacing="-0.2">Books</text>
+</svg>

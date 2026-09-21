@@ -819,49 +819,49 @@ const FAQS = [
   },
 ];
 
-/* ── Premier Indian CA & Audit Firms (Social Proof) ── */
-const CA_FIRMS = [
+/* ── Top Accounting & ERP Integrations (Marquee) ── */
+const TOP_INTEGRATIONS = [
   {
-    logo: "/logos/deloitte.svg",
-    alt: "Deloitte",
-    practice: "Deloitte Haskins & Sells",
-    sub: "Chartered Accountants",
-    heightClass: "h-4 sm:h-5",
-  },
-  {
-    logo: "/logos/pwc.svg",
-    alt: "PricewaterhouseCoopers",
-    practice: "Price Waterhouse & Co.",
-    sub: "Statutory Audit",
-    heightClass: "h-7 sm:h-8",
-  },
-  {
-    logo: "/logos/ey.svg",
-    alt: "Ernst & Young",
-    practice: "S.R. Batliboi & Co.",
-    sub: "Assurance & Tax",
-    heightClass: "h-7 sm:h-8",
-  },
-  {
-    logo: "/logos/kpmg.svg",
-    alt: "KPMG",
-    practice: "BSR & Co. LLP",
-    sub: "Chartered Accountants",
-    heightClass: "h-5 sm:h-6",
-  },
-  {
-    logo: "/logos/bdo.svg",
-    alt: "BDO",
-    practice: "BDO India LLP",
-    sub: "Tax & Advisory",
+    logo: "/logos/tally.svg",
+    alt: "Tally Prime",
+    name: "Tally Prime",
+    sub: "XML & ODBC Sync",
     heightClass: "h-6 sm:h-7",
   },
   {
-    logo: "/logos/grant_thornton.svg",
-    alt: "Grant Thornton",
-    practice: "Walker Chandiok & Co",
-    sub: "Chartered Accountants",
-    heightClass: "h-4 sm:h-4.5",
+    logo: "/logos/sap.svg",
+    alt: "SAP S/4HANA",
+    name: "SAP S/4HANA",
+    sub: "BAPI & RFC Connector",
+    heightClass: "h-6 sm:h-7",
+  },
+  {
+    logo: "/logos/zoho.svg",
+    alt: "Zoho Books",
+    name: "Zoho Books",
+    sub: "Cloud REST API",
+    heightClass: "h-6 sm:h-7",
+  },
+  {
+    logo: "/logos/quickbooks.svg",
+    alt: "QuickBooks Online",
+    name: "QuickBooks Online",
+    sub: "Direct Ledger Bridge",
+    heightClass: "h-6 sm:h-7",
+  },
+  {
+    logo: "/logos/busy.svg",
+    alt: "Busy Accounting",
+    name: "Busy Accounting",
+    sub: "Voucher Sync",
+    heightClass: "h-6 sm:h-7",
+  },
+  {
+    logo: "/logos/excel.svg",
+    alt: "Microsoft Excel",
+    name: "Excel & Sheets",
+    sub: "Custom CSV Formatter",
+    heightClass: "h-6 sm:h-7",
   },
 ];
 
@@ -1306,33 +1306,33 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ── 2. Enterprise Social Proof Logo Bar (PRD Section 02 with Scroll Velocity) ── */}
+        {/* ── 2. Top Accounting & ERP Integrations Logo Bar (Scroll Velocity) ── */}
         <section className="border-b border-border/80 bg-white/70 py-5 sm:py-8 overflow-hidden relative">
           <div className="mx-auto max-w-6xl px-4 text-center md:px-6 mb-3 sm:mb-5">
             <p className="font-mono text-[9px] sm:text-[11px] uppercase tracking-[0.16em] sm:tracking-[0.2em] text-[#64748b] font-semibold">
-              TRUSTED BY LEADING CA FIRMS &amp; AUDIT PRACTITIONERS ACROSS INDIA
+              SEAMLESS TWO-WAY INTEGRATION WITH LEADING ACCOUNTING &amp; ERP PLATFORMS
             </p>
           </div>
 
           <div className="relative flex w-full flex-col items-center justify-center overflow-hidden">
             <ScrollVelocityContainer className="w-full">
               <ScrollVelocityRow baseVelocity={3} direction={1} className="py-2">
-                {CA_FIRMS.map((co, idx) => (
+                {TOP_INTEGRATIONS.map((tool, idx) => (
                   <div
-                    key={`${co.alt}-${idx}`}
-                    className="mx-4 sm:mx-10 inline-flex flex-col items-center justify-center gap-1.5 group transition-all duration-300 hover:-translate-y-0.5"
+                    key={`${tool.alt}-${idx}`}
+                    className="mx-3 sm:mx-6 w-[130px] sm:w-[160px] inline-flex flex-col items-center justify-center gap-1.5 group transition-all duration-300 hover:-translate-y-0.5 text-center shrink-0"
                   >
-                    <div className="h-8 sm:h-9 flex items-center justify-center">
+                    <div className="h-8 sm:h-9 w-full flex items-center justify-center">
                       <img
-                        src={co.logo}
-                        alt={co.alt}
-                        className={`${co.heightClass} w-auto max-w-[110px] sm:max-w-[125px] object-contain opacity-85 group-hover:opacity-100 transition-opacity`}
+                        src={tool.logo}
+                        alt={tool.alt}
+                        className={`${tool.heightClass} w-auto max-w-[110px] sm:max-w-[130px] object-contain opacity-90 group-hover:opacity-100 transition-opacity mx-auto`}
                         loading="lazy"
                       />
                     </div>
-                    <div className="text-center">
-                      <div className="text-[10px] sm:text-[11px] font-bold text-foreground leading-tight">{co.practice}</div>
-                      <div className="text-[8px] sm:text-[9px] text-muted-foreground font-mono">{co.sub}</div>
+                    <div className="text-center w-full">
+                      <div className="text-[10px] sm:text-[11px] font-bold text-foreground leading-tight text-center">{tool.name}</div>
+                      <div className="text-[8px] sm:text-[9px] text-muted-foreground font-mono text-center">{tool.sub}</div>
                     </div>
                   </div>
                 ))}

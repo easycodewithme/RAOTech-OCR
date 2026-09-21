@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 122 36" width="122" height="36" fill="none">
+  <!-- Microsoft Excel Modern App Icon -->
+  <g transform="translate(2, 4)">
+    <rect x="8" y="1" width="20" height="26" rx="2.5" fill="#107c41" />
+    <path d="M12 7 H24 M12 12 H24 M12 17 H24 M12 22 H24" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.6" stroke-linecap="round" />
+    <rect x="0" y="5" width="18" height="18" rx="3" fill="#185c37" />
+    <path d="M5 8.5 L7.5 14 L5 19.5 H7.2 L8.8 15.5 L10.5 19.5 H12.5 L10.2 14 L12.5 8.5 H10.4 L8.8 12.3 L7.2 8.5 Z" fill="#ffffff" />
+  </g>
+  <!-- Wordmark -->
+  <text x="36" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="700" fill="#111827" letter-spacing="-0.2">Excel</text>
+  <text x="36" y="31" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="6" font-weight="600" fill="#107c41" letter-spacing="1.2">SPREADSHEETS</text>
+</svg>
