@@ -157,6 +157,29 @@ export function defaultLedgerForRole(
       : { group: "DUTIES_AND_TAXES", ledgerType: "TAX_INPUT" };
   }
 
+  if (r === "BANK") {
+    // The role is literally the group. A bank line creating an Indirect
+    // Expense was the single most misleading outcome of the old default,
+    // because the bank picker is where it happened most.
+    return { group: "BANK_ACCOUNTS", ledgerType: "BANK" };
+  }
+
+  if (r === "ROUND_OFF") {
+    return { group: "INDIRECT_EXPENSES", ledgerType: "ROUND_OFF" };
+  }
+
+  if (r === "DISCOUNT") {
+    /**
+     * Which way a discount points depends on whose document it is: a discount
+     * allowed on a sale is an expense, a discount received on a purchase is
+     * income. Filing both as an expense understates income on every purchase
+     * that carries one.
+     */
+    return SALES_SIDE
+      ? { group: "INDIRECT_EXPENSES", ledgerType: "EXPENSE" }
+      : { group: "INDIRECT_INCOME", ledgerType: "INCOME" };
+  }
+
   if (r === "ITEM") {
     // An item line on a sale is revenue, not cost. Filing it under Purchase
     // Accounts put sales into the purchase ledger in the client's own books.

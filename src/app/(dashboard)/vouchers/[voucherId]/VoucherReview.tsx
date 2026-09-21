@@ -23,6 +23,15 @@ interface Line {
   hsnCode: string | null;
   gstRate: number | null;
   sortOrder: number;
+  /**
+   * Set only on a line that moves stock. The query already returned these —
+   * the type simply did not declare them, so the review screen could not show
+   * what a voucher was about to do to the client's quantities.
+   */
+  stockItemName: string | null;
+  quantity: number | null;
+  unit: string | null;
+  rate: number | null;
 }
 
 interface Voucher {
@@ -684,6 +693,7 @@ export default function VoucherReview({
                   <thead className="text-slate-600 dark:text-zinc-400 bg-slate-50 dark:bg-zinc-800/70 uppercase text-xs border-b border-slate-200 dark:border-zinc-800">
                     <tr>
                       <th className="px-3 py-2 text-left font-semibold">Ledger</th>
+                      <th className="px-3 py-2 text-right font-semibold">Quantity</th>
                       <th className="px-3 py-2 text-right font-semibold">Debit</th>
                       <th className="px-3 py-2 text-right font-semibold">Credit</th>
                     </tr>
@@ -719,6 +729,36 @@ export default function VoucherReview({
                                 />
                               ) : (
                                 <span className="text-slate-900 dark:text-zinc-100 font-semibold">{l.ledgerNameSnapshot || "—"}</span>
+                              )}
+                            </td>
+                            {/* What this line does to the client's stock, shown
+                                where the approval happens. A voucher could
+                                move quantities in Tally with nothing on this
+                                screen saying so — the numbers were on the line
+                                all along. A line with no stock item shows a
+                                dash, which is correct for a services client. */}
+                            <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                              {l.stockItemName && l.quantity != null ? (
+                                <>
+                                  <span className="text-slate-900 dark:text-zinc-100">
+                                    {l.quantity.toLocaleString("en-IN", { maximumFractionDigits: 3 })}
+                                    {l.unit ? ` ${l.unit}` : ""}
+                                  </span>
+                                  {l.rate != null && (
+                                    <span className="block text-xs text-slate-500 dark:text-zinc-400">
+                                      @ {money(l.rate)}
+                                    </span>
+                                  )}
+                                </>
+                              ) : l.stockItemName ? (
+                                <span
+                                  className="text-xs text-amber-600 dark:text-amber-400"
+                                  title="This line names a stock item but carries no quantity, so it moves value without moving stock."
+                                >
+                                  no qty
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 dark:text-zinc-600">—</span>
                               )}
                             </td>
                             <td className="px-3 py-2 text-right font-semibold text-slate-900 dark:text-zinc-100">{l.debit ? money(l.debit) : ""}</td>

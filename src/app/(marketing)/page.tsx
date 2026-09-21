@@ -3,9 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
-import { useRouter } from "next/navigation";
 
-import { Button } from "@/components/ui/button";
 import { InteractiveHoverButton } from "@/registry/magicui/interactive-hover-button";
 import { AnimatedButton } from "@/components/ui/animated-button";
 import {
@@ -15,10 +13,6 @@ import {
 
 import {
   ArrowRight,
-  FileStack,
-  MessageSquareText,
-  FileSpreadsheet,
-  Users,
   Clock,
   CheckCircle2,
   Zap,
@@ -26,21 +20,10 @@ import {
   ChevronDown,
   Menu,
   X,
-  Mail,
   Check,
   Upload,
-  BookOpen,
   RefreshCw,
   FileText,
-  Layers,
-  Sparkles,
-  ExternalLink,
-  Factory,
-  Pill,
-  Truck,
-  ShoppingBag,
-  Database,
-  Lock,
   Volume2,
   VolumeX,
   Search,

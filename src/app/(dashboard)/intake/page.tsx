@@ -21,7 +21,6 @@ import {
   X,
   Loader2,
   Search,
-  MessageCircle,
   AlertCircle,
 } from "lucide-react";
 

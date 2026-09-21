@@ -183,8 +183,12 @@ export default function TallyConnection({ clientName }: { clientName?: string })
       </div>
 
       {loading && !data ? (
-        <div className="rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 text-sm text-gray-500 dark:text-zinc-400 shadow-sm">
-          <Loader2 className="mr-2 inline h-4 w-4 animate-spin" /> Reading the connection…
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 text-sm text-gray-500 dark:text-zinc-400 shadow-sm"
+        >
+          <Loader2 className="mr-2 inline h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Reading the connection…
         </div>
       ) : (
         <>
@@ -406,7 +410,7 @@ function DeviceSection({
           </div>
 
           <p className="flex items-center gap-2 text-xs text-gray-400 dark:text-zinc-500 pt-1">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" /> Waiting for the connector to claim this code…
+            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none text-emerald-600" aria-hidden="true" /> Waiting for the connector to claim this code…
           </p>
         </div>
       ) : (
@@ -435,7 +439,7 @@ function DeviceSection({
               No device is currently paired. Generate a pairing code to link your desktop connector with this workspace.
             </p>
             <Button size="sm" onClick={pair} disabled={busy === "pair"}>
-              {busy === "pair" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {busy === "pair" ? <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" /> : null}
               Pair a device
             </Button>
           </div>
@@ -557,7 +561,7 @@ function CompanySection({
             </p>
           </div>
           <Button size="sm" onClick={save} disabled={busy === "save" || !name.trim() || (!!company && !dirty)}>
-            {busy === "save" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            {busy === "save" ? <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Save className="mr-2 h-4 w-4" />}
             Save
           </Button>
         </div>
@@ -590,11 +594,11 @@ function CompanySection({
             disabled={!company || !paired || busy === "master"}
             onClick={onSyncMaster}
           >
-            {busy === "master" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            {busy === "master" ? <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Sync Master
           </Button>
           <Button size="sm" variant="outline" disabled={!paired || busy === "test"} onClick={onTestConnection}>
-            {busy === "test" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wifi className="mr-2 h-4 w-4" />}
+            {busy === "test" ? <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Wifi className="mr-2 h-4 w-4" />}
             Test Connection
           </Button>
           <p className="text-xs text-gray-500 dark:text-zinc-400">
@@ -633,7 +637,7 @@ function Diagnostics({
         <h2 className="font-semibold text-slate-900 dark:text-zinc-100">Diagnostics</h2>
       </header>
       <div className="space-y-3 p-4 text-sm">
-        <div className="flex items-start gap-2">
+        <div className="flex items-start gap-2" role="status" aria-live="polite">
           {reachable ? (
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
           ) : (

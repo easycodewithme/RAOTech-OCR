@@ -96,9 +96,35 @@ describe("item lines", () => {
   });
 });
 
+describe("roles that are their own answer", () => {
+  it("files a bank line under Bank Accounts", () => {
+    expect(defaultLedgerForRole("BANK", "PAYMENT")).toEqual({
+      group: "BANK_ACCOUNTS",
+      ledgerType: "BANK",
+    });
+  });
+
+  it("gives round-off its own ledger type", () => {
+    expect(defaultLedgerForRole("ROUND_OFF", "PURCHASE")).toEqual({
+      group: "INDIRECT_EXPENSES",
+      ledgerType: "ROUND_OFF",
+    });
+  });
+
+  /**
+   * A discount allowed on a sale is an expense; a discount received on a
+   * purchase is income. Filing both as an expense understates income on every
+   * purchase carrying one.
+   */
+  it("points a discount whichever way the document does", () => {
+    expect(defaultLedgerForRole("DISCOUNT", "SALE").ledgerType).toBe("EXPENSE");
+    expect(defaultLedgerForRole("DISCOUNT", "PURCHASE").ledgerType).toBe("INCOME");
+  });
+});
+
 describe("everything else", () => {
   it("falls back to indirect expenses", () => {
-    expect(defaultLedgerForRole("ROUND_OFF", "PURCHASE")).toEqual({
+    expect(defaultLedgerForRole("SOMETHING_ELSE", "PURCHASE")).toEqual({
       group: "INDIRECT_EXPENSES",
       ledgerType: "EXPENSE",
     });

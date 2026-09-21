@@ -446,14 +446,37 @@ export default function TransactionsList({
               ? "Book a demo to export"
               : `Export XML (${selected.size})`}
           </Button>
+          {/* `pushBlocked` was computed from the pre-flight result and then
+              never read, so the panel below could say a voucher would be
+              rejected while this button still sent it — the check ran and
+              nothing acted on it. Blocked now, along with an empty selection,
+              which otherwise posted an empty body that the route reads as
+              "all approved vouchers".
+
+              The demo gate stays separate: with no booking the button is not
+              an action, it is a link to the booking page, so it must remain
+              clickable with nothing selected. */}
           <Button
             size="sm"
-            disabled={!demoAccessChecked}
+            disabled={
+              !demoAccessChecked ||
+              busy ||
+              (hasDemoAccess && (!selected.size || preflighting || pushBlocked))
+            }
             className="bg-[#0b6b3a] hover:bg-[#0a5c32]"
             onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/book-your-demo?returnTo=/transactions")}
+            title={
+              hasDemoAccess && pushBlocked
+                ? "Pre-flight found problems Tally would reject. Fix them below, or deselect those vouchers."
+                : undefined
+            }
           >
             <Send className="mr-2 h-4 w-4" />
-            {demoAccessChecked && !hasDemoAccess ? "Book a demo to push" : `Push to Tally (${selected.size})`}
+            {demoAccessChecked && !hasDemoAccess
+              ? "Book a demo to push"
+              : pushBlocked
+                ? `Blocked (${selected.size})`
+                : `Push to Tally (${selected.size})`}
           </Button>
         </div>
       </div>
