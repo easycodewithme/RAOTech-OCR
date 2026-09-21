@@ -2,7 +2,6 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -19,8 +18,12 @@ import {
   ArrowRight,
   History,
   Plus,
+  Building2,
 } from "lucide-react";
 import { detectDocumentType, detectedToDocumentType } from "@/lib/docs/detectType";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { registerUnsavedWork } from "@/components/ClientSwitcher";
+import { formatCount, formatMoney } from "@/lib/format";
 
 type ExtractedData = Record<string, any>;
 type GSTValidation = {
@@ -68,6 +71,45 @@ const MAX_FILE_SIZE_MB = 20;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = ".pdf,.jpg,.jpeg,.png,.bmp,.tiff,.webp";
 
+/** The workspace this batch is being filed under. */
+type ActiveClient = { id: string; name: string };
+
+/**
+ * A save that has been asked for but not yet allowed to run.
+ *
+ * Stored as an intent rather than a captured callback: the guard can sit on
+ * screen for as long as it takes someone to read it, and a closure captured
+ * before the dialog opened would be holding a `documents` array from before
+ * whatever they did while thinking about it.
+ */
+type SaveIntent =
+  | { kind: "all" }
+  | { kind: "invoice"; docId: string }
+  | { kind: "bank"; docId: string }
+  | { kind: "duplicate"; docId: string };
+
+/**
+ * How often the page re-reads which client is active while a batch is open.
+ *
+ * The active client can be changed from the topbar on this very screen, and
+ * from another tab, and neither tells us. Fifteen seconds is short enough that
+ * nobody finishes typing over a batch before the banner corrects itself, and
+ * the endpoint is served from the server's in-process client-list cache, so
+ * the cost is a round trip and no query.
+ */
+const CLIENT_RECHECK_MS = 15_000;
+
+/**
+ * OCR hands back whatever it read — a number, a string, sometimes nothing.
+ * Parsing is this screen's problem; how a rupee amount is written is not, so
+ * everything goes through the one shared formatter and the em dash it returns
+ * for a value it cannot render.
+ */
+function money(value: unknown): string {
+  const n = typeof value === "number" ? value : parseFloat(String(value ?? ""));
+  return Number.isFinite(n) ? formatMoney(n) : "—";
+}
+
 export default function UploadPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -84,6 +126,28 @@ export default function UploadPage() {
     docId: string;
     duplicateOfId: string | null;
   } | null>(null);
+
+  /* ------------------------------------------------- which client, exactly */
+
+  /**
+   * Whose books these documents go into is decided by the server at save time,
+   * from the workspace's active client — never by anything sent from here. For
+   * two minutes of OCR this screen had no idea which client that was, and a
+   * switch in the topbar mid-batch silently re-pointed "Save All" at another
+   * company's ledgers. Three pieces of state close that:
+   *
+   *   activeClient — what the server would use if we saved right now.
+   *   batchClient  — what it was when this batch started. The promise on screen.
+   *   clientGuard  — a save held back because those two have diverged.
+   */
+  const [activeClient, setActiveClient] = useState<ActiveClient | null>(null);
+  const [batchClient, setBatchClient] = useState<ActiveClient | null>(null);
+  const [clientError, setClientError] = useState<string | null>(null);
+  const [clientGuard, setClientGuard] = useState<{
+    intent: SaveIntent;
+    current: ActiveClient | null;
+  } | null>(null);
+  const [switchingBack, setSwitchingBack] = useState(false);
 
   const extractedCount = useMemo(
     () => documents.filter((doc) => !!doc.extractedData).length,
@@ -102,6 +166,19 @@ export default function UploadPage() {
     [documents]
   );
 
+  /**
+   * Documents that exist only in this tab: extracted (so OCR time has been
+   * spent on them) but not written anywhere, or mid-flight right now. This is
+   * what a client switch or a closed tab would throw away.
+   */
+  const unsavedCount = useMemo(
+    () =>
+      documents.filter(
+        (doc) => (!!doc.extractedData && !doc.saved) || doc.extracting || doc.saving
+      ).length,
+    [documents]
+  );
+
   useEffect(() => {
     documentsRef.current = documents;
   }, [documents]);
@@ -113,6 +190,92 @@ export default function UploadPage() {
       });
     };
   }, []);
+
+  /** The active client as the server sees it. Null on any failure — a guess
+   *  here is worse than an admission, because the whole point is to be right
+   *  about which company we are naming. */
+  const readActiveClient = useCallback(async (): Promise<ActiveClient | null> => {
+    try {
+      const res = await fetch("/api/clients", { cache: "no-store" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const match = (data.clients ?? []).find(
+        (c: { id: string }) => c.id === data.activeClientId
+      );
+      return match ? { id: match.id, name: match.name } : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Read it on mount, then keep it honest while a batch is open. The topbar
+  // switcher lives on this same screen and a second tab can switch too, and
+  // neither of them tells us; polling is the only thing that does. Focus is
+  // included because coming back from another tab is exactly when the answer
+  // has most likely changed.
+  useEffect(() => {
+    let alive = true;
+    async function sync() {
+      const next = await readActiveClient();
+      if (!alive) return;
+      setActiveClient(next);
+      setClientError(next ? null : "Could not read which client is active.");
+    }
+    // The active client is server state that changes without us, so reading it
+    // here is a subscription rather than a render-time computation.
+    void sync();
+    if (!documents.length) return () => { alive = false; };
+    const timer = window.setInterval(sync, CLIENT_RECHECK_MS);
+    window.addEventListener("focus", sync);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", sync);
+    };
+    // Only whether a batch exists matters, not its contents — re-subscribing on
+    // every keystroke in an extracted field would restart the timer forever.
+  }, [readActiveClient, documents.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pin the client the moment a batch starts, and let go once the batch is
+  // gone. Pinning here rather than inside addFiles covers the case where the
+  // first read of /api/clients has not landed yet when the files are dropped.
+  useEffect(() => {
+    if (!documents.length) {
+      if (batchClient) setBatchClient(null);
+      return;
+    }
+    if (!batchClient && activeClient) setBatchClient(activeClient);
+  }, [documents.length, batchClient, activeClient]);
+
+  /**
+   * Tell the client switcher there is something to lose, and the browser too.
+   *
+   * Registered only while something is actually unsaved, so a clean screen
+   * never makes anyone dismiss a prompt, and torn down in the effect's own
+   * cleanup so neither registration can outlive the state it speaks for.
+   */
+  useEffect(() => {
+    if (!unsavedCount) return;
+    const noun = docType === "bank" ? "bank statement" : "invoice";
+    const describe = () =>
+      `${unsavedCount} extracted ${noun}${unsavedCount === 1 ? "" : "s"} on the upload screen ${unsavedCount === 1 ? "has" : "have"} not been saved`;
+    const unregister = registerUnsavedWork(describe);
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      // Older browsers only show the prompt if returnValue is set; the string
+      // itself has been ignored by every browser for years.
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      unregister();
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [unsavedCount, docType]);
+
+  /** The batch was started for one client and another is active now. */
+  const clientDrifted =
+    !!batchClient && !!activeClient && batchClient.id !== activeClient.id;
 
   const addFiles = async (incomingFiles: File[]) => {
     if (!incomingFiles.length) return;
@@ -450,16 +613,13 @@ export default function UploadPage() {
     }
   };
 
-  const confirmDuplicateSave = async () => {
-    if (!pendingDuplicate) return;
-    const { docId } = pendingDuplicate;
-    setPendingDuplicate(null);
+  const runSaveDuplicate = async (docId: string) => {
     const result = await saveSingle(docId, { allowDuplicate: true });
     if (result?.voucherId) router.push(`/vouchers/${result.voucherId}`);
   };
 
   // Save a single document and jump straight to its ledger-mapping screen
-  const saveAndMap = async (id: string) => {
+  const runSaveAndMap = async (id: string) => {
     const result = await saveSingle(id);
     if (result?.voucherId) {
       router.push(`/vouchers/${result.voucherId}`);
@@ -469,7 +629,7 @@ export default function UploadPage() {
   };
 
   // Bank statement: save the extracted transactions and open its mapping screen
-  const saveBankAndMap = async (id: string) => {
+  const runSaveBankAndMap = async (id: string) => {
     const doc = documents.find((d) => d.id === id);
     if (!doc?.extractedData) return;
     setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, saving: true, error: null } : d)));
@@ -494,7 +654,7 @@ export default function UploadPage() {
     }
   };
 
-  const handleSaveAll = async () => {
+  const runSaveAll = async () => {
     if (!documents.length) {
       setError("Add documents before saving.");
       return;
@@ -529,14 +689,102 @@ export default function UploadPage() {
     }
   };
 
-  const formatCurrency = (val: any) => {
-    const num = typeof val === "number" ? val : parseFloat(val);
-    if (isNaN(num)) return val;
-    return `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  const runIntent = async (intent: SaveIntent) => {
+    if (intent.kind === "all") return runSaveAll();
+    if (intent.kind === "bank") return runSaveBankAndMap(intent.docId);
+    if (intent.kind === "duplicate") return runSaveDuplicate(intent.docId);
+    return runSaveAndMap(intent.docId);
+  };
+
+  /**
+   * The only way a save starts on this screen.
+   *
+   * `/api/invoices/save` resolves the client itself, from the workspace, at
+   * the moment it runs — so the only check worth making is the one made
+   * immediately before the request, against the same source the route will
+   * read. A value cached when the files were dropped would prove nothing.
+   *
+   * When that read fails we refuse rather than proceed: an unverifiable save
+   * is the exact case this guard exists for, and the recheck above puts the
+   * screen right again within fifteen seconds without anyone reloading.
+   */
+  const requestSave = async (intent: SaveIntent) => {
+    const current = await readActiveClient();
+    setActiveClient(current);
+    if (!current) {
+      setClientError("Could not read which client is active.");
+      setError(
+        "Could not confirm which client these documents would be filed under. Nothing was saved — check your connection and try again."
+      );
+      return;
+    }
+    setClientError(null);
+    if (batchClient && current.id !== batchClient.id) {
+      setClientGuard({ intent, current });
+      return;
+    }
+    if (!batchClient) setBatchClient(current);
+    await runIntent(intent);
+  };
+
+  /**
+   * Move the workspace's active client — the same write the topbar switcher
+   * makes, because that setting is the only lever that decides where a save
+   * lands. Returns whether it took.
+   */
+  const switchWorkspaceTo = async (client: ActiveClient): Promise<boolean> => {
+    setSwitchingBack(true);
+    try {
+      const res = await fetch("/api/clients", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId: client.id }),
+      });
+      if (!res.ok) {
+        setError(`Could not switch back to ${client.name}. Nothing was saved.`);
+        return false;
+      }
+      setActiveClient(client);
+      // The topbar switcher renders from server props; without this it would
+      // keep showing the client we just moved away from.
+      router.refresh();
+      return true;
+    } catch {
+      setError(`Could not switch back to ${client.name}. Nothing was saved.`);
+      return false;
+    } finally {
+      setSwitchingBack(false);
+    }
+  };
+
+  /** Banner action: put the workspace back, no save attached. */
+  const switchBackToBatchClient = async () => {
+    if (!batchClient) return;
+    await switchWorkspaceTo(batchClient);
+  };
+
+  /** Dialog action: put the workspace back, then run the save that was held. */
+  const switchBackAndSave = async () => {
+    if (!clientGuard || !batchClient) return;
+    if (!(await switchWorkspaceTo(batchClient))) return;
+    const { intent } = clientGuard;
+    setClientGuard(null);
+    await runIntent(intent);
+  };
+
+  /** The deliberate other answer: re-pin the batch to whoever is active now. */
+  const refileUnderActive = async () => {
+    if (!clientGuard?.current) return;
+    const { intent, current } = clientGuard;
+    setBatchClient(current);
+    setClientGuard(null);
+    await runIntent(intent);
   };
 
   return (
-    <div className="p-8 max-w-6xl mx-auto space-y-6" style={{ background: "var(--spx-canvas)" }}>
+    // p-4 below 640px: 32px of gutter on a 375px screen left the line-item
+    // table and the amount grid with nowhere to go.
+    <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-8" style={{ background: "var(--spx-canvas)" }}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2
@@ -552,15 +800,23 @@ export default function UploadPage() {
             AI ingestion &amp; OCR extraction pipeline
           </p>
         </div>
-        <div className="flex overflow-hidden text-sm" style={{ border: "1px solid var(--spx-border)" }}>
+        <div
+          role="radiogroup"
+          aria-label="Document type"
+          className="flex overflow-hidden text-sm"
+          style={{ border: "1px solid var(--spx-border)" }}
+        >
           {([["invoice", "Invoice"], ["bank", "Bank Statement"]] as const).map(([val, label]) => (
             <button
               key={val}
+              type="button"
+              role="radio"
+              aria-checked={docType === val}
               onClick={() => {
                 setDocType(val);
                 setAutoDetected(null);
               }}
-              className="uppercase transition-colors"
+              className="min-h-11 cursor-pointer uppercase transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--spx-active-border)] motion-reduce:transition-none"
               style={{
                 padding: "9px 18px",
                 fontSize: "11px",
@@ -575,6 +831,27 @@ export default function UploadPage() {
           ))}
         </div>
       </div>
+
+      {/* UX-03: which company's books these documents are going into, named on
+          screen for the whole life of the batch. It is the one fact the save
+          depends on and the one fact the screen never used to state. */}
+      <ClientBanner
+        batchClient={batchClient}
+        activeClient={activeClient}
+        drifted={clientDrifted}
+        error={clientError}
+        batchSize={documents.length}
+        busy={switchingBack}
+        onSwitchBack={() => {
+          // Put the workspace back and stop there. Nothing is saved from the
+          // banner: the point of noticing early is to be able to carry on
+          // working, not to be pushed into a save.
+          if (batchClient) void switchBackToBatchClient();
+        }}
+        onAdopt={() => {
+          if (activeClient) setBatchClient(activeClient);
+        }}
+      />
 
       {autoDetected && (
         <div
@@ -618,24 +895,43 @@ export default function UploadPage() {
         <p className="text-[var(--spx-text)]" style={{ fontSize: "15px", fontWeight: 500 }}>
           {documents.length
             ? `${documents.length} document(s) selected`
-            : "Drag & drop up to 15 invoice files here"}
+            : `Drag & drop up to ${MAX_FILES} files here`}
         </p>
         <p className="mt-1" style={{ fontSize: "12px", color: "var(--spx-muted)" }}>
-          Supports PDF, JPG, PNG, BMP, TIFF, WEBP (max 20MB each)
+          Supports PDF, JPG, PNG, BMP, TIFF, WEBP (max {MAX_FILE_SIZE_MB}MB each)
         </p>
 
+        {/* The surrounding div takes a click for convenience, but a div is not
+            reachable by keyboard and cannot carry a role while it also contains
+            these buttons. This is the focusable way in. */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            fileInputRef.current?.click();
+          }}
+          className="mt-4 inline-flex min-h-11 cursor-pointer items-center justify-center border border-[var(--spx-border)] px-4 text-[11px] font-semibold uppercase tracking-[1.2px] text-[var(--spx-text)] transition-colors duration-150 hover:bg-[var(--spx-hover-bg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] motion-reduce:transition-none"
+        >
+          Choose files
+        </button>
+
         {documents.length > 0 && (
-          <div className="mt-5 flex items-center justify-center gap-4">
-            <span style={{ fontSize: "12px", color: "var(--spx-muted)" }}>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+            <span
+              role="status"
+              aria-live="polite"
+              style={{ fontSize: "12px", color: "var(--spx-muted)" }}
+            >
               Extracted {extractedCount}/{documents.length}
             </span>
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 handleExtractAll();
               }}
               disabled={extractingAll}
-              className="inline-flex items-center uppercase disabled:opacity-50"
+              className="inline-flex min-h-11 cursor-pointer items-center uppercase transition-opacity duration-150 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
               style={{
                 background: "var(--spx-text)",
                 color: "var(--spx-canvas)",
@@ -659,17 +955,23 @@ export default function UploadPage() {
             </button>
             {docType === "invoice" && (
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleSaveAll();
+                  void requestSave({ kind: "all" });
                 }}
                 disabled={
                   savingAll ||
+                  switchingBack ||
                   !documents.length ||
                   extractedCount !== documents.length ||
                   savedCount === documents.length
                 }
-                className="inline-flex items-center uppercase disabled:opacity-50"
+                // Names the destination, so the button and the banner agree
+                // even for someone reading only the control they are about to
+                // press.
+                title={batchClient ? `Save into ${batchClient.name}` : undefined}
+                className="inline-flex min-h-11 cursor-pointer items-center uppercase transition-colors duration-150 hover:bg-[var(--spx-hover-bg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
                 style={{
                   background: "transparent",
                   color: "var(--spx-text)",
@@ -682,7 +984,7 @@ export default function UploadPage() {
               >
                 {savingAll ? (
                   <>
-                    <Loader2 className="animate-spin mr-2 h-4 w-4" />
+                    <Loader2 className="animate-spin mr-2 h-4 w-4 motion-reduce:animate-none" />
                     Saving All...
                   </>
                 ) : savedCount === documents.length ? (
@@ -693,7 +995,9 @@ export default function UploadPage() {
                 ) : (
                   <>
                     <Save className="mr-2 h-4 w-4" />
-                    Save All Invoices
+                    {batchClient
+                      ? `Save all into ${batchClient.name}`
+                      : "Save All Invoices"}
                   </>
                 )}
               </button>
@@ -705,8 +1009,10 @@ export default function UploadPage() {
       {/* Error */}
       {error && (
         <div
-          className="flex items-center gap-2"
-          style={{ border: "1px solid #7f1d1d", background: "rgba(127,29,29,0.15)", padding: "12px 16px", color: "#fca5a5" }}
+          // Was a fixed pale red on a dark wash: unreadable against the white
+          // card of the light theme. Per-theme now, both sides above 4.5:1.
+          className="flex items-center gap-2 border border-red-300 bg-red-50 px-4 py-3 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+          role="alert"
         >
           <XCircle className="h-5 w-5 shrink-0" />
           <p className="text-sm">{error}</p>
@@ -714,10 +1020,15 @@ export default function UploadPage() {
       )}
 
       {documents.length > 0 && (
+        // Every number here moves on its own as extraction and saving run.
         <div
+          role="status"
+          aria-live="polite"
           style={{ border: "1px solid var(--spx-border)", background: "var(--spx-card)", padding: "10px 14px", fontSize: "12px", color: "var(--spx-text-secondary)" }}
         >
-          Added {documents.length}/{MAX_FILES} documents &middot; Extracted {extractedCount} &middot; Saved {savedCount}
+          Added {formatCount(documents.length)}/{MAX_FILES} documents &middot; Extracted{" "}
+          {formatCount(extractedCount)} &middot; Saved {formatCount(savedCount)}
+          {batchClient ? ` · Filing into ${batchClient.name}` : ""}
         </div>
       )}
 
@@ -726,12 +1037,12 @@ export default function UploadPage() {
         {documents.map((doc, docIndex) => (
           <div
             key={doc.id}
-            className="space-y-4 animate-in fade-in"
+            className="space-y-4 animate-in fade-in motion-reduce:animate-none"
             style={{ border: "1px solid var(--spx-border)", background: "var(--spx-card)", padding: "24px" }}
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="flex items-center gap-2 text-white" style={{ fontSize: "15px", fontWeight: 600 }}>
+                <h3 className="flex items-center gap-2 text-[var(--spx-text)]" style={{ fontSize: "15px", fontWeight: 600 }}>
                   <FileUp className="h-4 w-4" style={{ color: "var(--spx-muted)" }} />
                   {docIndex + 1}. {doc.file.name}
                 </h3>
@@ -740,39 +1051,39 @@ export default function UploadPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                {/* Status chips: the old fixed pairs (#7dd3fc on #1e3a5f and so
+                    on) were built for the dark card only and washed out on the
+                    light one. Per-theme, and the same three tones the rest of
+                    the app uses. */}
                 {doc.ledgerChoice === "previous" && doc.ledgerSuggestion && (
-                  <span
-                    className="inline-flex items-center gap-1 uppercase"
-                    style={{ border: "1px solid #1e3a5f", color: "#7dd3fc", padding: "4px 10px", fontSize: "10px", letterSpacing: "0.8px" }}
-                  >
+                  <span className="inline-flex items-center gap-1 border border-sky-300 px-2.5 py-1 text-[10px] uppercase tracking-[0.8px] text-sky-800 dark:border-sky-900 dark:text-sky-300">
                     <History className="h-3 w-3" /> Reusing {doc.ledgerSuggestion.ledgerName}
                   </span>
                 )}
                 {doc.ledgerChoice === "new" && (
-                  <span
-                    className="inline-flex items-center gap-1 uppercase"
-                    style={{ border: "1px solid #5c4517", color: "#fbbf24", padding: "4px 10px", fontSize: "10px", letterSpacing: "0.8px" }}
-                  >
+                  <span className="inline-flex items-center gap-1 border border-amber-400 px-2.5 py-1 text-[10px] uppercase tracking-[0.8px] text-amber-800 dark:border-amber-800 dark:text-amber-300">
                     <Plus className="h-3 w-3" /> New ledger
                   </span>
                 )}
                 {doc.saved && (
                   <span
-                    className="inline-flex items-center gap-1 uppercase"
-                    style={{ border: "1px solid #14532d", color: "#4ade80", padding: "4px 10px", fontSize: "10px", letterSpacing: "0.8px" }}
+                    role="status"
+                    className="inline-flex items-center gap-1 border border-emerald-400 px-2.5 py-1 text-[10px] uppercase tracking-[0.8px] text-emerald-800 dark:border-emerald-800 dark:text-emerald-300"
                   >
                     <CheckCircle2 className="h-3 w-3" /> Saved
                   </span>
                 )}
                 <button
+                  type="button"
                   onClick={() => extractSingle(doc.id)}
                   disabled={doc.extracting}
-                  className="inline-flex items-center uppercase disabled:opacity-50"
+                  aria-label={`${doc.extractedData ? "Re-extract" : "Extract"} ${doc.file.name}`}
+                  className="inline-flex min-h-11 cursor-pointer items-center uppercase transition-colors duration-150 hover:bg-[var(--spx-hover-bg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
                   style={{ border: "1px solid var(--spx-border)", color: "var(--spx-text)", background: "transparent", padding: "8px 14px", fontSize: "11px", letterSpacing: "1px" }}
                 >
                   {doc.extracting ? (
                     <>
-                      <Loader2 className="animate-spin mr-2 h-4 w-4" /> Extracting
+                      <Loader2 className="animate-spin mr-2 h-4 w-4 motion-reduce:animate-none" /> Extracting
                     </>
                   ) : (
                     <>
@@ -782,14 +1093,21 @@ export default function UploadPage() {
                 </button>
                 {doc.extractedData && (
                   <button
-                    onClick={() => (docType === "bank" ? saveBankAndMap(doc.id) : saveAndMap(doc.id))}
-                    disabled={doc.saving}
-                    className="inline-flex items-center uppercase disabled:opacity-50"
+                    type="button"
+                    onClick={() =>
+                      void requestSave({
+                        kind: docType === "bank" ? "bank" : "invoice",
+                        docId: doc.id,
+                      })
+                    }
+                    disabled={doc.saving || switchingBack}
+                    aria-label={`Save ${doc.file.name}${batchClient ? ` into ${batchClient.name}` : ""} and map its ledgers`}
+                    className="inline-flex min-h-11 cursor-pointer items-center uppercase transition-opacity duration-150 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
                     style={{ background: "var(--spx-text)", color: "var(--spx-canvas)", padding: "8px 14px", fontSize: "11px", letterSpacing: "1px", fontWeight: 600 }}
                   >
                     {doc.saving ? (
                       <>
-                        <Loader2 className="animate-spin mr-2 h-4 w-4" /> Saving
+                        <Loader2 className="animate-spin mr-2 h-4 w-4 motion-reduce:animate-none" /> Saving
                       </>
                     ) : (
                       <>
@@ -800,8 +1118,10 @@ export default function UploadPage() {
                   </button>
                 )}
                 <button
+                  type="button"
                   onClick={() => removeDocument(doc.id)}
-                  className="inline-flex items-center uppercase"
+                  aria-label={`Remove ${doc.file.name} from this batch`}
+                  className="inline-flex min-h-11 cursor-pointer items-center uppercase transition-colors duration-150 hover:bg-[var(--spx-hover-bg)] hover:text-[var(--spx-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] motion-reduce:transition-none"
                   style={{ border: "1px solid var(--spx-border)", color: "var(--spx-muted)", background: "transparent", padding: "8px 14px", fontSize: "11px", letterSpacing: "1px" }}
                 >
                   Remove
@@ -811,8 +1131,8 @@ export default function UploadPage() {
 
             {doc.error && (
               <div
-                className="flex items-center gap-2"
-                style={{ border: "1px solid #7f1d1d", background: "rgba(127,29,29,0.15)", padding: "10px 14px", color: "#fca5a5" }}
+                className="flex items-center gap-2 border border-red-300 bg-red-50 px-3.5 py-2.5 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                role="alert"
               >
                 <XCircle className="h-5 w-5 shrink-0" />
                 <p className="text-sm">{doc.error}</p>
@@ -868,14 +1188,11 @@ export default function UploadPage() {
                   )}
                   {doc.gstValidation && (
                     <div
-                      className="flex items-center gap-1 uppercase"
-                      style={{
-                        border: `1px solid ${doc.gstValidation.is_valid_invoice ? "#14532d" : "#5c4517"}`,
-                        color: doc.gstValidation.is_valid_invoice ? "#4ade80" : "#fbbf24",
-                        padding: "5px 12px",
-                        fontSize: "10px",
-                        letterSpacing: "0.8px",
-                      }}
+                      className={`flex items-center gap-1 border px-3 py-[5px] text-[10px] uppercase tracking-[0.8px] ${
+                        doc.gstValidation.is_valid_invoice
+                          ? "border-emerald-400 text-emerald-800 dark:border-emerald-800 dark:text-emerald-300"
+                          : "border-amber-400 text-amber-800 dark:border-amber-800 dark:text-amber-300"
+                      }`}
                     >
                       {doc.gstValidation.is_valid_invoice ? (
                         <CheckCircle2 className="h-3 w-3" />
@@ -925,15 +1242,15 @@ export default function UploadPage() {
                               {doc.extractedData.items.map((item: any, i: number) => (
                                 <tr key={i} style={{ borderTop: "1px solid var(--spx-border)" }}>
                                   <td className="px-4 py-2" style={{ color: "var(--spx-muted)" }}>{i + 1}</td>
-                                  <td className="px-4 py-2 text-white font-medium">{item.name || item.description || "-"}</td>
+                                  <td className="px-4 py-2 text-[var(--spx-text)] font-medium">{item.name || item.description || "-"}</td>
                                   <td className="px-4 py-2" style={{ color: "var(--spx-text-secondary)" }}>{item.hsn_code || "-"}</td>
-                                  <td className="px-4 py-2 text-right" style={{ color: "var(--spx-text-secondary)" }}>{item.qty ?? "-"}</td>
-                                  <td className="px-4 py-2 text-right" style={{ color: "var(--spx-text-secondary)" }}>{item.rate != null ? formatCurrency(item.rate) : "-"}</td>
-                                  <td className="px-4 py-2 text-right text-white font-semibold">
+                                  <td className="px-4 py-2 text-right" style={{ color: "var(--spx-text-secondary)" }}>{item.qty || "-"}</td>
+                                  <td className="px-4 py-2 text-right" style={{ color: "var(--spx-text-secondary)" }}>{item.rate != null ? money(item.rate) : "-"}</td>
+                                  <td className="px-4 py-2 text-right text-[var(--spx-text)] font-semibold">
                                     {item.price != null
-                                      ? formatCurrency(item.price)
+                                      ? money(item.price)
                                       : item.amount != null
-                                      ? formatCurrency(item.amount)
+                                      ? money(item.amount)
                                       : "-"}
                                   </td>
                                 </tr>
@@ -987,40 +1304,175 @@ export default function UploadPage() {
         />
       )}
 
+      {/* This was a hand-rolled overlay with no role, no focus trap and no
+          Escape, guarding a write to a client's books. ConfirmDialog already
+          solved all three for the Tally screens. */}
       {pendingDuplicate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
-          <div className="w-full max-w-md" style={{ background: "var(--spx-card)", border: "1px solid var(--spx-border)" }}>
-            <div className="p-6">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center" style={{ border: "1px solid #5c4517", color: "#fbbf24" }}>
-                  <AlertTriangle className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-white" style={{ fontSize: "16px", fontWeight: 700 }}>Possible duplicate</h3>
-                  <p className="mt-1" style={{ fontSize: "13px", color: "var(--spx-text-secondary)" }}>
-                    Same invoice number, vendor, and amount already exist for this client.
-                    Saving again will create another voucher marked as duplicate.
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-3 p-4" style={{ borderTop: "1px solid var(--spx-border)" }}>
+        <ConfirmDialog
+          title="Possible duplicate"
+          body={
+            <>
+              An invoice with the same number, vendor and amount already exists for{" "}
+              <strong className="text-[var(--spx-text)]">
+                {batchClient?.name ?? "this client"}
+              </strong>
+              . Saving again creates a second voucher, marked as a duplicate.
+            </>
+          }
+          confirmLabel="Save anyway"
+          onConfirm={() => {
+            const { docId } = pendingDuplicate;
+            setPendingDuplicate(null);
+            // Back through the guard: this dialog can sit open for as long as
+            // someone takes to check, and the active client can move under it.
+            void requestSave({ kind: "duplicate", docId });
+          }}
+          onCancel={() => setPendingDuplicate(null)}
+        />
+      )}
+
+      {clientGuard && batchClient && (
+        <ConfirmDialog
+          title={`These documents were started for ${batchClient.name}`}
+          body={
+            <>
+              <p>
+                The active client changed while this batch was open. Saving now would file{" "}
+                <strong className="text-[var(--spx-text)]">
+                  {formatCount(documents.filter((d) => !!d.extractedData && !d.saved).length)}
+                </strong>{" "}
+                document(s) into the wrong company&apos;s books.
+              </p>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 border border-[var(--spx-border)] bg-[var(--spx-input-bg)] p-3">
+                <dt className="text-[var(--spx-muted)]">Batch started for</dt>
+                <dd className="font-semibold text-[var(--spx-text)]">{batchClient.name}</dd>
+                <dt className="text-[var(--spx-muted)]">Active now</dt>
+                <dd className="font-semibold text-[var(--spx-text)]">
+                  {clientGuard.current?.name ?? "unknown"}
+                </dd>
+              </dl>
               <button
-                className="flex-1 uppercase"
-                style={{ border: "1px solid var(--spx-border)", color: "var(--spx-text)", background: "transparent", padding: "10px", fontSize: "11px", letterSpacing: "1px" }}
-                onClick={() => setPendingDuplicate(null)}
+                type="button"
+                onClick={() => void refileUnderActive()}
+                disabled={switchingBack || !clientGuard.current}
+                className="mt-3 inline-flex min-h-11 w-full cursor-pointer items-center justify-center border border-[var(--spx-border)] px-3 text-xs font-semibold uppercase tracking-[1px] text-[var(--spx-text-secondary)] transition-colors duration-150 hover:bg-[var(--spx-hover-bg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
               >
-                Cancel
+                File under {clientGuard.current?.name ?? "the active client"} instead
               </button>
-              <button
-                className="flex-1 uppercase"
-                style={{ background: "var(--spx-text)", color: "var(--spx-canvas)", padding: "10px", fontSize: "11px", letterSpacing: "1px", fontWeight: 600 }}
-                onClick={confirmDuplicateSave}
-              >
-                Save anyway
-              </button>
-            </div>
-          </div>
+            </>
+          }
+          confirmLabel={
+            switchingBack ? "Switching back…" : `Switch back to ${batchClient.name} and save`
+          }
+          busy={switchingBack}
+          onConfirm={() => void switchBackAndSave()}
+          onCancel={() => setClientGuard(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The client line. Permanent, at the top, above the drop zone — not a tooltip
+ * and not a badge tucked beside the title, because it is the one fact that
+ * decides whose books the next two minutes of work land in.
+ *
+ * It has three states, and the difference between them is the whole point:
+ * naming the client while everything agrees; saying "still checking" rather
+ * than guessing while the first read is in flight; and, when the active client
+ * has moved out from under an open batch, saying both names and offering the
+ * two answers instead of picking one silently.
+ */
+function ClientBanner({
+  batchClient,
+  activeClient,
+  drifted,
+  error,
+  batchSize,
+  busy,
+  onSwitchBack,
+  onAdopt,
+}: {
+  batchClient: ActiveClient | null;
+  activeClient: ActiveClient | null;
+  drifted: boolean;
+  error: string | null;
+  batchSize: number;
+  busy: boolean;
+  onSwitchBack: () => void;
+  onAdopt: () => void;
+}) {
+  const named = batchClient ?? activeClient;
+
+  return (
+    // role="status" because this is read after mount and can change on its own
+    // while someone is looking somewhere else on the page.
+    <div
+      role="status"
+      aria-live="polite"
+      className={`flex flex-wrap items-center gap-x-3 gap-y-2 border p-3 sm:px-4 ${
+        drifted
+          ? "border-amber-400 bg-amber-50 dark:border-amber-500/50 dark:bg-amber-500/10"
+          : "border-[var(--spx-border)] bg-[var(--spx-card)]"
+      }`}
+    >
+      {drifted ? (
+        <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+      ) : (
+        <Building2 className="h-5 w-5 shrink-0 text-[var(--spx-muted)]" strokeWidth={1.5} />
+      )}
+
+      <div className="min-w-0 flex-1">
+        <p
+          className="uppercase"
+          style={{ fontSize: "10px", letterSpacing: "1.2px", color: "var(--spx-muted)" }}
+        >
+          {batchSize > 0 ? "Filing into the books of" : "Documents will be filed into"}
+        </p>
+        <p
+          className="truncate font-semibold text-[var(--spx-text)]"
+          style={{ fontSize: "16px" }}
+          title={named?.name}
+        >
+          {named?.name ?? (error ? "Unknown — could not read the active client" : "Checking…")}
+        </p>
+        {drifted && (
+          <p className="mt-1 text-[13px] text-amber-800 dark:text-amber-200">
+            The active client is now{" "}
+            <strong>{activeClient?.name ?? "another client"}</strong>. Save without choosing and
+            these {batchSize} document(s) go into <strong>{activeClient?.name}</strong>&apos;s
+            books, not <strong>{batchClient?.name}</strong>&apos;s.
+          </p>
+        )}
+        {!drifted && error && (
+          <p className="mt-1 text-[13px] text-[var(--spx-text-secondary)]">
+            {error} Saving is blocked until it can be confirmed.
+          </p>
+        )}
+      </div>
+
+      {drifted && (
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <button
+            type="button"
+            onClick={onSwitchBack}
+            disabled={busy}
+            className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center whitespace-nowrap border border-amber-500 bg-amber-500 px-4 text-[11px] font-semibold uppercase tracking-[1px] text-amber-950 transition-colors duration-150 hover:bg-amber-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none sm:flex-none"
+          >
+            {busy ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : null}
+            Back to {batchClient?.name}
+          </button>
+          <button
+            type="button"
+            onClick={onAdopt}
+            disabled={busy}
+            className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center whitespace-nowrap border border-amber-600/60 px-4 text-[11px] font-semibold uppercase tracking-[1px] text-amber-900 transition-colors duration-150 hover:bg-amber-500/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] disabled:cursor-not-allowed disabled:opacity-60 dark:text-amber-200 motion-reduce:transition-none sm:flex-none"
+          >
+            File under {activeClient?.name}
+          </button>
         </div>
       )}
     </div>
@@ -1042,27 +1494,40 @@ function LedgerReusePopup({
 }) {
   const reason = VIA_LABEL[suggestion.via] || "matched from history";
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
-      <div className="w-full max-w-md animate-in zoom-in-95" style={{ background: "var(--spx-card)", border: "1px solid var(--spx-border)" }}>
+    // Not a ConfirmDialog: both buttons are real answers and neither is a
+    // cancel, so there is nothing for Escape or a backdrop click to mean.
+    // Everything else that dialog does — the role, the label, the reduced-motion
+    // opt-out — this needs just as much.
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in motion-reduce:animate-none"
+      style={{ background: "var(--spx-overlay)" }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Party seen before: ${vendor}`}
+        className="w-full max-w-md animate-in zoom-in-95 duration-200 motion-reduce:animate-none motion-reduce:duration-0"
+        style={{ background: "var(--spx-card)", border: "1px solid var(--spx-border)" }}
+      >
         <div className="p-6">
           <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center" style={{ border: "1px solid #1e3a5f", color: "#7dd3fc" }}>
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center border border-sky-300 text-sky-700 dark:border-sky-900 dark:text-sky-300">
               <History className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-white" style={{ fontSize: "16px", fontWeight: 700 }}>Party seen before</h3>
+              <h3 className="text-[var(--spx-text)]" style={{ fontSize: "16px", fontWeight: 700 }}>Party seen before</h3>
               <p className="mt-0.5 truncate" style={{ fontSize: "12px", color: "var(--spx-muted)" }}>{fileName}</p>
             </div>
           </div>
 
           <div className="mt-4 space-y-3 text-sm">
             <p style={{ color: "var(--spx-text-secondary)" }}>
-              <span className="font-semibold text-white">{vendor}</span> looks like a party you&apos;ve
+              <span className="font-semibold text-[var(--spx-text)]">{vendor}</span> looks like a party you&apos;ve
               already mapped ({reason}).
             </p>
-            <div style={{ border: "1px solid #1e3a5f", background: "rgba(30,58,95,0.15)", padding: "12px 16px" }}>
-              <p className="uppercase" style={{ fontSize: "10px", letterSpacing: "1px", color: "#7dd3fc" }}>Previously used ledger</p>
-              <p className="mt-0.5 text-white" style={{ fontSize: "15px", fontWeight: 600 }}>
+            <div className="border border-sky-300 bg-sky-50 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/40">
+              <p className="uppercase text-sky-800 dark:text-sky-300" style={{ fontSize: "10px", letterSpacing: "1px" }}>Previously used ledger</p>
+              <p className="mt-0.5 text-[var(--spx-text)]" style={{ fontSize: "15px", fontWeight: 600 }}>
                 {suggestion.ledgerName}
               </p>
             </div>
@@ -1074,16 +1539,19 @@ function LedgerReusePopup({
 
         <div className="flex gap-3 p-4" style={{ borderTop: "1px solid var(--spx-border)" }}>
           <button
-            className="flex-1 inline-flex items-center justify-center uppercase"
+            type="button"
+            className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center uppercase transition-colors duration-150 hover:bg-[var(--spx-hover-bg)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] motion-reduce:transition-none"
             style={{ border: "1px solid var(--spx-border)", color: "var(--spx-text)", background: "transparent", padding: "10px", fontSize: "11px", letterSpacing: "1px" }}
             onClick={onCreateNew}
           >
             <Plus className="mr-2 h-4 w-4" /> Create new
           </button>
           <button
-            className="flex-1 inline-flex items-center justify-center uppercase"
+            type="button"
+            className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center uppercase transition-opacity duration-150 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--spx-active-border)] motion-reduce:transition-none"
             style={{ background: "var(--spx-text)", color: "var(--spx-canvas)", padding: "10px", fontSize: "11px", letterSpacing: "1px", fontWeight: 600 }}
             onClick={onReuse}
+            autoFocus
           >
             <CheckCircle2 className="mr-2 h-4 w-4" /> Use previous
           </button>
@@ -1109,12 +1577,8 @@ function Field({
       <Input
         value={String(value)}
         onChange={(e) => onChange(e.target.value)}
-        style={{
-          background: "var(--spx-canvas, #0b0d10)",
-          color: "var(--spx-text, #ffffff)",
-          border: "1px solid var(--spx-border)",
-          borderRadius: 0,
-        }}
+        className="text-[var(--spx-text)]"
+        style={{ background: "var(--spx-canvas)", border: "1px solid var(--spx-border)", borderRadius: 0 }}
       />
     </div>
   );
@@ -1130,8 +1594,6 @@ function AmountCard({
   highlight?: boolean;
 }) {
   if (value == null) return null;
-  const num = typeof value === "number" ? value : parseFloat(value);
-  const display = isNaN(num) ? value : `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 
   return (
     <div
@@ -1142,8 +1604,16 @@ function AmountCard({
       }}
     >
       <p className="uppercase" style={{ fontSize: "10px", letterSpacing: "0.8px", color: "var(--spx-muted)" }}>{label}</p>
-      <p style={{ fontSize: "16px", fontWeight: 700, color: highlight ? "var(--spx-text, #ffffff)" : "#e2e1eb" }}>
-        {display}
+      {/* Was a hardcoded near-white, which is 1.2:1 on the light theme's white
+          card. Both weights are token colours now. */}
+      <p
+        style={{
+          fontSize: "16px",
+          fontWeight: 700,
+          color: highlight ? "var(--spx-text)" : "var(--spx-text-secondary)",
+        }}
+      >
+        {money(value)}
       </p>
     </div>
   );
@@ -1151,9 +1621,11 @@ function AmountCard({
 
 function BankSummary({ data }: { data: any }) {
   const txns: any[] = Array.isArray(data?.transactions) ? data.transactions : [];
+  // A zero withdrawal on a deposit row is noise, not information, so an empty
+  // cell rather than the em dash `money()` would give.
   const fmt = (n: any) => {
     const num = typeof n === "number" ? n : parseFloat(n);
-    return isNaN(num) || num === 0 ? "" : `₹${num.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+    return !Number.isFinite(num) || num === 0 ? "" : formatMoney(num);
   };
   return (
     <div>
@@ -1164,7 +1636,7 @@ function BankSummary({ data }: { data: any }) {
         <span className="uppercase" style={{ border: "1px solid var(--spx-border)", color: "var(--spx-text-secondary)", padding: "5px 12px", fontSize: "10px", letterSpacing: "0.8px" }}>
           A/C: {data?.account_number || "—"}
         </span>
-        <span className="uppercase font-medium" style={{ border: "1px solid #14532d", color: "#4ade80", padding: "5px 12px", fontSize: "10px", letterSpacing: "0.8px" }}>
+        <span className="border border-emerald-400 px-3 py-[5px] text-[10px] font-medium uppercase tracking-[0.8px] text-emerald-800 dark:border-emerald-800 dark:text-emerald-300">
           {txns.length} transactions
         </span>
       </div>
@@ -1183,9 +1655,11 @@ function BankSummary({ data }: { data: any }) {
             {txns.map((t, i) => (
               <tr key={i} style={{ borderTop: "1px solid var(--spx-border)" }}>
                 <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--spx-text-secondary)" }}>{t.date || "—"}</td>
-                <td className="px-3 py-2 text-white">{t.description || "—"}</td>
-                <td className="px-3 py-2 text-right" style={{ color: "#f87171" }}>{fmt(t.withdrawal)}</td>
-                <td className="px-3 py-2 text-right" style={{ color: "#4ade80" }}>{fmt(t.deposit)}</td>
+                <td className="px-3 py-2 text-[var(--spx-text)]">{t.description || "—"}</td>
+                {/* red-700/emerald-700 in light, -400 in dark: money columns
+                    have to be readable on both card colours. */}
+                <td className="px-3 py-2 text-right text-red-700 dark:text-red-400">{fmt(t.withdrawal)}</td>
+                <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-400">{fmt(t.deposit)}</td>
                 <td className="px-3 py-2 text-right" style={{ color: "var(--spx-text-secondary)" }}>{fmt(t.balance)}</td>
               </tr>
             ))}
@@ -1198,7 +1672,7 @@ function BankSummary({ data }: { data: any }) {
         </table>
       </div>
       <p className="mt-2" style={{ fontSize: "11px", color: "var(--spx-muted)" }}>
-        Click <strong className="text-white">Map Transactions</strong> to assign a ledger to each row and send to Tally.
+        Click <strong className="text-[var(--spx-text)]">Map Transactions</strong> to assign a ledger to each row and send to Tally.
       </p>
     </div>
   );
