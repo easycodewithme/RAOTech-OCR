@@ -3,6 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { getActiveClient } from "@/lib/clientContext";
 import { rememberMapping } from "@/lib/accounting/rememberMapping";
 import { normGstin } from "@/lib/accounting/normalize";
+import { recordAuditEvent } from "@/lib/audit";
+import { formatDate } from "@/lib/format";
+// The same tolerance pre-flight uses. Approving a voucher that pre-flight will
+// later reject strands it for good: it cannot be edited (PATCH requires DRAFT)
+// and no route un-approves. See the constant's own note in preflight.ts.
+import { BALANCE_EPSILON } from "@/lib/tally/preflight";
 
 export async function POST(
   req: Request,
@@ -34,7 +40,7 @@ export async function POST(
       );
     }
 
-    if (Math.abs(voucher.totalDebit - voucher.totalCredit) > 0.01) {
+    if (Math.abs(voucher.totalDebit - voucher.totalCredit) > BALANCE_EPSILON) {
       return NextResponse.json(
         { error: "Cannot approve: voucher is not balanced" },
         { status: 422 }
@@ -56,6 +62,36 @@ export async function POST(
         client.id
       );
     }
+
+    // Approval is the gate in front of the client's live books: nothing in this
+    // app un-approves, and the next thing that happens to this voucher is a
+    // push. `approvedBy` already held a user id, but with one login per firm
+    // that is a constant — this is the row that names the person.
+    await recordAuditEvent({
+      userId: user.id,
+      clientId: client.id,
+      action: "VOUCHER_APPROVED",
+      entityType: "VOUCHER",
+      entityId: voucher.id,
+      // Named by its bill number where there is one, and by its date otherwise:
+      // a Payment or a bank-statement voucher has no invoice behind it, and
+      // "voucher 8f3c1a2e" tells a reader nothing they can act on.
+      summary: `Approved ${voucher.voucherType.toLowerCase()} voucher ${
+        voucher.invoice?.invoiceNumber
+          ? `${voucher.invoice.invoiceNumber} `
+          : `dated ${formatDate(voucher.date)} `
+      }for ${client.name}`,
+      metadata: {
+        mode: "single",
+        voucherIds: [voucher.id],
+        voucherType: voucher.voucherType,
+        invoiceId: voucher.invoiceId,
+        invoiceNumber: voucher.invoice?.invoiceNumber ?? null,
+        vendor: voucher.invoice?.vendor ?? null,
+        totalDebit: voucher.totalDebit,
+        avgConfidence: voucher.avgConfidence,
+      },
+    });
 
     return NextResponse.json({ voucher: approved });
   } catch (error) {

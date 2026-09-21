@@ -35,6 +35,19 @@ interface ClaimedJobRow {
  * the second one steps over the row the first is taking instead of blocking on
  * it or, worse, reading it as still queued. A read-then-update pair here would
  * hand the same voucher batch to both machines.
+ *
+ * The `dependsOnJobId` clause is what turns the queue's *ordering* into an
+ * actual *dependency*. A push enqueues MASTER_CREATE and then VOUCHER_PUSH, and
+ * FIFO alone only guarantees the master job is handed out first — not that it
+ * succeeded. Without this, a failed master create was followed immediately by a
+ * push in which every voucher failed with `Ledger 'X' does not exist!`: one root
+ * cause, then a second wave of failures that look unrelated to it.
+ *
+ * A job whose dependency is not yet DONE is simply not selected, so it stays
+ * QUEUED and keeps its place in line rather than being consumed and failed.
+ * The id lives in the JSON payload rather than a column deliberately — the
+ * database is shared with an unrelated project, so every migration here is
+ * hand-written, and this needed none.
  */
 async function claimJob(userId: string, deviceId: string) {
   const rows = await prisma.$queryRaw<ClaimedJobRow[]>(Prisma.sql`
@@ -48,6 +61,15 @@ async function claimJob(userId: string, deviceId: string) {
          FROM "SyncJob" s
         WHERE s."userId" = ${userId}
           AND s.state = 'QUEUED'::"SyncJobState"
+          AND (
+            s.payload ->> 'dependsOnJobId' IS NULL
+            OR EXISTS (
+              SELECT 1
+                FROM "SyncJob" d
+               WHERE d.id = s.payload ->> 'dependsOnJobId'
+                 AND d.state = 'DONE'::"SyncJobState"
+            )
+          )
         ORDER BY s."createdAt" ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
