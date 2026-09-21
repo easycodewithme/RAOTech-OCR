@@ -17,6 +17,26 @@ export interface DashboardStats {
   invoiceCount: number;
   draftCount: number;
   approvedCount: number;
+  /**
+   * Vouchers TallyPrime has actually accepted.
+   *
+   * Read from VoucherSync, never from Voucher.status, and that distinction is
+   * the whole point of this field. `EXPORTED_DEMO` is written the instant
+   * someone clicks Export XML — before Tally has seen the file, and whether or
+   * not the import is ever run. Folding it into an "In Tally" number told a
+   * firm that downloaded 400 vouchers and never imported them that 400 were in
+   * their client's books. VoucherSync.state = 'POSTED' is only written once
+   * Tally itself reported the voucher accepted, which is the same honest source
+   * syncFailedCount and syncStuckCount below already use.
+   */
+  postedCount: number;
+  /**
+   * Vouchers whose XML has been written to a file and nothing more.
+   *
+   * Still worth a number — it is the pile of work waiting to be imported by
+   * hand — but it says nothing about what is in Tally, so it must never be
+   * labelled as though it does.
+   */
   exportedCount: number;
   /**
    * Vouchers Tally refused. The number this whole product exists to keep at
@@ -94,9 +114,13 @@ export async function getDashboardData(
           WHERE "userId" = ${userId} AND "clientId" = ${clientId} AND status = 'DRAFT') AS "draftCount",
         (SELECT COUNT(*)::int FROM "Voucher"
           WHERE "userId" = ${userId} AND "clientId" = ${clientId} AND status = 'APPROVED') AS "approvedCount",
+        (SELECT COUNT(*)::int FROM "VoucherSync" vs
+          JOIN "Voucher" v ON v.id = vs."voucherId"
+          WHERE v."userId" = ${userId} AND v."clientId" = ${clientId}
+            AND vs.state = 'POSTED') AS "postedCount",
         (SELECT COUNT(*)::int FROM "Voucher"
           WHERE "userId" = ${userId} AND "clientId" = ${clientId}
-            AND status IN ('EXPORTED_DEMO', 'POSTED')) AS "exportedCount",
+            AND status = 'EXPORTED_DEMO') AS "exportedCount",
         (SELECT COUNT(*)::int FROM "VoucherSync" vs
           JOIN "Voucher" v ON v.id = vs."voucherId"
           WHERE v."userId" = ${userId} AND v."clientId" = ${clientId}

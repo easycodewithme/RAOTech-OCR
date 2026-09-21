@@ -37,6 +37,16 @@ export async function POST(req: Request) {
     // Repointing at a different company invalidates every GUID we hold: they
     // are company-scoped in Tally, so the masters have to be pulled again
     // before anything may be posted.
+    //
+    // The same reasoning covers both master types, not just ledgers. A stock
+    // item's link to a company is `tallySyncedAt` rather than a GUID (see the
+    // note in `buildMasterCreatePayload`: an item is only ever *named* on a
+    // voucher, so we never asked Tally for its GUID). That makes the stale
+    // marker worse, not better — a synced-at timestamp from the old company
+    // permanently excludes the item from MASTER_CREATE, so it is never created
+    // in the new one and the first inventory push comes back
+    // `Stock Item 'X' does not exist!` with nothing on our side able to explain
+    // why. Both resets therefore happen together, below.
     const renamed = !!existing && existing.companyName !== companyName;
 
     const company = await prisma.tallyCompany.upsert({
@@ -55,10 +65,28 @@ export async function POST(req: Request) {
     });
 
     if (renamed) {
-      await prisma.ledger.updateMany({
-        where: { userId: user.id, clientId: client.id },
-        data: { tallyGuid: null, tallySyncedAt: null, tallyReserved: false },
-      });
+      // One transaction, because a half-done reset is the failure mode this
+      // whole block exists to prevent: ledgers cleared but stock items still
+      // carrying the old company's `tallySyncedAt` is precisely the state that
+      // makes inventory pushes fail forever.
+      await prisma.$transaction([
+        prisma.ledger.updateMany({
+          where: { userId: user.id, clientId: client.id },
+          data: { tallyGuid: null, tallySyncedAt: null, tallyReserved: false },
+        }),
+        prisma.stockItem.updateMany({
+          where: { userId: user.id, clientId: client.id },
+          // `tallyName` goes too: it records how the *old* company spelt the
+          // item, and a stale spelling is what a rename-aware MASTER_PULL
+          // would later trust.
+          data: {
+            tallyCompanyId: null,
+            tallyGuid: null,
+            tallyName: null,
+            tallySyncedAt: null,
+          },
+        }),
+      ]);
     }
 
     return NextResponse.json({ company });

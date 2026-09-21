@@ -4,6 +4,11 @@ import { getActiveClient } from "@/lib/clientContext";
 import { rememberMapping } from "@/lib/accounting/rememberMapping";
 import { normGstin } from "@/lib/accounting/normalize";
 import { withRouteLogging } from "@/lib/trace";
+import { recordAuditEvent, vouchersPhrase } from "@/lib/audit";
+// The same tolerance pre-flight uses. Approving a voucher that pre-flight will
+// later reject strands it for good: it cannot be edited (PATCH requires DRAFT)
+// and no route un-approves. See the constant's own note in preflight.ts.
+import { BALANCE_EPSILON } from "@/lib/tally/preflight";
 
 async function bulkApprove(req: Request) {
   try {
@@ -21,6 +26,7 @@ async function bulkApprove(req: Request) {
     });
 
     let approved = 0;
+    const approvedIds: string[] = [];
     const skipped: Array<{ id: string; reason: string }> = [];
 
     for (const v of vouchers) {
@@ -28,7 +34,7 @@ async function bulkApprove(req: Request) {
         skipped.push({ id: v.id, reason: "unmapped lines" });
         continue;
       }
-      if (Math.abs(v.totalDebit - v.totalCredit) > 0.01) {
+      if (Math.abs(v.totalDebit - v.totalCredit) > BALANCE_EPSILON) {
         skipped.push({ id: v.id, reason: "unbalanced" });
         continue;
       }
@@ -51,7 +57,39 @@ async function bulkApprove(req: Request) {
           client.id
         );
       }
+      approvedIds.push(v.id);
       approved++;
+    }
+
+    // One event for the batch, not one per voucher. Two hundred identical rows
+    // would bury the delete that happened underneath them and teach a firm
+    // owner to stop reading the screen; one row says the truer thing — that in
+    // a single action someone approved two hundred vouchers. The ids are kept
+    // in metadata, so nothing is lost, only folded.
+    //
+    // Skipped when nothing was approved: a request that changed no books is not
+    // an event, and writing it would fill the trail with noise from a UI that
+    // re-sends the same selection.
+    if (approved > 0) {
+      await recordAuditEvent({
+        userId: user.id,
+        clientId: client.id,
+        action: "VOUCHER_APPROVED",
+        entityType: "VOUCHER",
+        // Null for a batch: `entityId` answers "what happened to *this* row",
+        // and a batch is not one row. Except when the batch was one.
+        entityId: approvedIds.length === 1 ? approvedIds[0] : null,
+        summary: `Approved ${vouchersPhrase(approved)} for ${client.name}`,
+        metadata: {
+          mode: body.onlyHighConfidence ? "bulk-high-confidence" : "bulk",
+          approvedCount: approved,
+          voucherIds: approvedIds,
+          requestedCount: ids.length,
+          // Why the rest did not go through, so the row explains a partial
+          // batch without anyone re-running it to find out.
+          skipped,
+        },
+      });
     }
 
     return NextResponse.json({ approved, skipped });
