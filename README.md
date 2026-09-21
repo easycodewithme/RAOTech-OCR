@@ -23,7 +23,9 @@ month, and it is nearly all retyping. This does the retyping.
   mapped and reviewed before anything is written.
 - **Stock, where the client keeps it.** An item line becomes a real inventory
   allocation so the quantities in Tally move with the money — switched on by
-  having the masters, not by a setting.
+  having the masters, not by a setting. The Inventory screen replays those lines
+  into a closing balance per item, so the work can be checked without opening
+  Tally.
 - **GSTR-2B reconciliation** against the purchases in the books.
 - **Posting into TallyPrime** over its HTTP-XML gateway, through a desktop agent
   that polls outward — the cloud never dials into a client's machine.
@@ -74,6 +76,7 @@ against this database.**
 | `src/lib/accounting/` | voucher construction, ledger resolution |
 | `src/lib/bank/` | statement classification, the banking rule engine |
 | `src/lib/excel/` | spreadsheet parsing, layout detection, column mapping |
+| `src/lib/inventory/` | stock movement replay, weighted-average valuation |
 | `src/lib/tally/` | Tally XML, the gateway client, the job queue |
 | `scripts/` | end-to-end harnesses that drive the real pipeline |
 | `../tally-connector/` | the Go desktop agent |
