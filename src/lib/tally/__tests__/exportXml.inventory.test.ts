@@ -31,7 +31,7 @@ describe("inventory allocations", () => {
    * The whole reason this code path exists as its own branch.
    *
    * An item line's accounting ledger belongs INSIDE its inventory entry. Emit
-   * it there and also as a sibling ALLLEDGERENTRIES and Tally accepts the
+   * it there and also as a sibling ledger entry and Tally accepts the
    * voucher, the books still balance, and the purchase account is debited
    * twice. Nothing on our side would ever report that — the client just finds
    * their expenses doubled.
@@ -56,8 +56,28 @@ describe("inventory allocations", () => {
     );
     expect(inv).toContain("Purchase A/c");
 
-    // The party is still an ordinary ledger entry.
-    expect(count(xml, "ALLLEDGERENTRIES.LIST")).toBe(1);
+    // The party is still an ordinary ledger entry -- in the invoice-mode tag.
+    expect(count(xml, "LEDGERENTRIES.LIST")).toBe(1);
+    expect(count(xml, "ALLLEDGERENTRIES.LIST")).toBe(0);
+  });
+
+  /**
+   * The tag that decides whether Tally will record the voucher at all.
+   *
+   * Measured: a voucher carrying ALLINVENTORYENTRIES whose party and tax lines
+   * sit in ALLLEDGERENTRIES.LIST is refused with errors=0, exceptions=1 and no
+   * reason -- and refused identically however the rest is shaped. Sixteen other
+   * variations were tried before the tag was. This test is the guard, because
+   * the failure it prevents is invisible: the push simply comes back blank.
+   */
+  it("uses the invoice-mode entry tag whenever the voucher moves stock", () => {
+    const withStock = buildTallyXml({
+      companyName: "TESTCO",
+      ledgers: [],
+      vouchers: [voucher([ITEM_LINE, PARTY_LINE])],
+    });
+    expect(withStock).toContain("<LEDGERENTRIES.LIST>");
+    expect(withStock).not.toContain("<ALLLEDGERENTRIES.LIST>");
   });
 
   it("keeps tax and round-off as ordinary ledger entries beside the stock", () => {
@@ -74,7 +94,8 @@ describe("inventory allocations", () => {
       ],
     });
     expect(count(xml, "ALLINVENTORYENTRIES.LIST")).toBe(1);
-    expect(count(xml, "ALLLEDGERENTRIES.LIST")).toBe(3);
+    expect(count(xml, "LEDGERENTRIES.LIST")).toBe(3);
+    expect(count(xml, "ALLLEDGERENTRIES.LIST")).toBe(0);
   });
 
   /** Tally wants "10 Nos" and "100.00/Nos", not bare numbers. */

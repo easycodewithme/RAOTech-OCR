@@ -349,6 +349,36 @@ export function validateRows(
     );
   }
 
+  // --- sheet-level: item mode with no quantity column ----------------------
+  //
+  // Warning, not error, and the choice is the whole doctrine of this module.
+  // A quantity column is not needed to post a *correct* voucher: an item line
+  // carrying an amount is a complete accounting entry, and plenty of ordinary
+  // registers — service line items, consolidated amount-only sales books, a
+  // freight line on a purchase — never carry one. Blocking those would be a
+  // rule that fires on correct sheets, which is worse than no rule.
+  //
+  // It has to be *said*, though, because the consequence is invisible after the
+  // fact. For a client who keeps stock item masters, these lines post their
+  // money and move none of their stock, and nothing in Tally afterwards shows
+  // that a quantity was ever expected — the accountant finds it at year end,
+  // reconciling a stock report against a purchase account that does not agree.
+  // Until this was fixed the failure was worse than invisible: `mapRows`
+  // invented a quantity of 1 for every line at a rate equal to the line total.
+  //
+  // The code is MISSING_REQUIRED_FIELD because `IssueCode` has no better
+  // member and lives in `types.ts`, which the whole excel layer shares; the
+  // severity, not the code, is what decides whether a row commits.
+  if (mapping.itemMode === "WITH_ITEM" && f.itemName !== null && f.quantity === null) {
+    push(
+      SHEET_SCOPE,
+      null,
+      "MISSING_REQUIRED_FIELD",
+      "warning",
+      `No column is mapped to "quantity". These rows will post their amounts correctly, but every item line will move zero stock in Tally. Map the quantity column if this client's inventory is tracked.`
+    );
+  }
+
   // --- sheet-level: ledger choices ----------------------------------------
   if (opts.requireLedgerMapping ?? true) {
     validateLedgerMapping(mapping, push);
@@ -451,15 +481,28 @@ export function validateRows(
         // buildVoucher drops any line whose amount is not positive
         // (`push()` returns early when amountPaise <= 0), so a negative value
         // here does not post small — it vanishes.
-        const blocking = field === "taxable" || field === "total" || field === "amount";
+        //
+        // Quantity blocks for the opposite reason, and it did not use to block
+        // at all. A negative quantity is not dropped anywhere: it is carried
+        // onto the voucher line and written out verbatim as
+        // `<ACTUALQTY>-5 Nos</ACTUALQTY>`, which Tally accepts. The client's
+        // stock then moves *down* on a purchase whose money moves up, and the
+        // only trace is a stock report nobody reconciles until year end. A
+        // return belongs in a SALE_RETURN / PURCHASE_RETURN upload, where the
+        // sign is carried by the voucher type rather than by one cell.
+        const isQuantity = field === "quantity";
+        const blocking =
+          isQuantity || field === "taxable" || field === "total" || field === "amount";
         push(
           index,
           column,
           "NEGATIVE_AMOUNT",
           blocking ? "error" : "warning",
-          blocking
-            ? `"${field}" is negative (${value}). A return belongs in a SALE_RETURN or PURCHASE_RETURN upload, not as a negative row.`
-            : `"${field}" is negative (${value}). Check the sign.`
+          isQuantity
+            ? `"quantity" is negative (${value}). It would post as a negative stock movement, taking stock out of this client's books on a document that puts it in. A return belongs in a SALE_RETURN or PURCHASE_RETURN upload.`
+            : blocking
+              ? `"${field}" is negative (${value}). A return belongs in a SALE_RETURN or PURCHASE_RETURN upload, not as a negative row.`
+              : `"${field}" is negative (${value}). Check the sign.`
         );
       }
     }

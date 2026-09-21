@@ -440,6 +440,19 @@ function readNumber(row: CellValue[], column: ColumnIndex | null): number {
   return value === null ? 0 : value;
 }
 
+/**
+ * Like `readNumber`, but keeps "no number was given" distinct from zero.
+ *
+ * `readNumber` folds an unmapped column, a blank cell and a genuine 0 into the
+ * same 0. That is right for money — nothing to add either way — and wrong for
+ * quantity, where "one unit" and "we were never told how many" are different
+ * facts and only one of them may be written into somebody's stock ledger.
+ */
+function readOptionalNumber(row: CellValue[], column: ColumnIndex | null): number | null {
+  if (column === null) return null;
+  return parseSheetNumber(cellAt(row, column));
+}
+
 function sumOver(rows: CellValue[][], column: ColumnIndex | null): number {
   if (column === null) return 0;
   return rows.reduce((sum, row) => sum + readNumber(row, column), 0);
@@ -516,11 +529,12 @@ function rowTaxableBase(row: CellValue[], mapping: SheetMapping, hasItems: boole
 function itemsFromRow(row: CellValue[], mapping: SheetMapping): NormalizedItem[] {
   const f = mapping.fields;
   const name = cellText(cellAt(row, f.itemName));
-  const qty = readNumber(row, f.quantity);
-  const rate = readNumber(row, f.rate);
+  // Optional, not zero-defaulted: see the note on the returned item below.
+  const qty = readOptionalNumber(row, f.quantity);
+  const rate = readOptionalNumber(row, f.rate);
   let price = readNumber(row, f.amount);
   if (Math.abs(price) < AMOUNT_EPSILON) price = readNumber(row, f.taxable);
-  if (Math.abs(price) < AMOUNT_EPSILON) price = qty * rate;
+  if (Math.abs(price) < AMOUNT_EPSILON) price = (qty ?? 0) * (rate ?? 0);
   if (!name && Math.abs(price) < AMOUNT_EPSILON) return [];
 
   let gstRate = rateForRow(row, mapping);
@@ -548,8 +562,30 @@ function itemsFromRow(row: CellValue[], mapping: SheetMapping): NormalizedItem[]
   return [
     {
       name: name ?? "Item",
-      qty: qty || 1,
-      rate: roundMoney(rate || (qty ? price / qty : price)),
+      /**
+       * Nothing is invented here any more.
+       *
+       * This used to be `qty || 1` with `rate` falling back to the whole line
+       * amount, so a WITH_ITEM sheet with no quantity column posted one unit of
+       * every item at a rate equal to the line total — silently, and into a
+       * real client's stock ledger. `quantity` is not a required field
+       * (`validate.ts` requires only `itemName` in item mode), so that shape of
+       * sheet is ordinary, not exceptional.
+       *
+       * 0 is the "not provided" marker rather than `null` because
+       * `NormalizedItem.qty` is `number` and is shared with the OCR ingestion
+       * path; the two consumers that matter already read it that way —
+       * `buildVoucher` writes `quantity: item.qty || null` onto the voucher
+       * line, and `exportXml` omits <ACTUALQTY>/<BILLEDQTY> entirely for a null
+       * quantity. A sheet that genuinely says 0 lands in the same place, which
+       * is correct: a zero-quantity inventory allocation moves no stock and has
+       * nothing to say to Tally.
+       *
+       * `rate` follows the same rule — derived from the line only when there is
+       * a real quantity to divide by, never equal to the whole amount.
+       */
+      qty: qty ?? 0,
+      rate: roundMoney(rate ?? (qty ? price / qty : 0)),
       price: roundMoney(price),
       hsnCode: cellText(cellAt(row, f.hsnCode)),
       gstRate,

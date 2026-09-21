@@ -1,4 +1,12 @@
-import type { VoucherDraft, VoucherLineInput, VoucherType } from "./types";
+import type {
+  BillRefType,
+  LedgerGroup,
+  LineRole,
+  VoucherDraft,
+  VoucherLineInput,
+  VoucherType,
+} from "./types";
+import { BILL_WISE_GROUPS } from "./types";
 import { buildVoucherFromLines } from "./buildVoucherLines";
 
 /**
@@ -27,6 +35,31 @@ export interface BankAllocation {
   /** Positive. Several allocations split one statement line across ledgers. */
   amount: number;
   confidence?: number | null;
+
+  /**
+   * The counter-ledger's group, when the caller knows it.
+   *
+   * This is what tells a payment to a supplier apart from a payment of the
+   * electricity bill, and the two must post differently. A Sundry Creditors /
+   * Sundry Debtors ledger is written to Tally with `ISBILLWISEON=Yes`, so every
+   * entry against it has to say which bill it touches. Without this field the
+   * builder cannot tell, so it did what it always did — called the line an
+   * ITEM, emitted no allocation, and let Tally park the money On Account while
+   * the invoice it was paying stayed 100% outstanding.
+   *
+   * Optional because it is genuinely unknown on some paths (an expense ledger
+   * chosen by rule carries no group in the row), and omitting it reproduces the
+   * old behaviour exactly rather than guessing.
+   */
+  ledgerGroup?: LedgerGroup | null;
+
+  /**
+   * The bill this allocation settles, when the accountant has named one.
+   *
+   * Present ⇒ `Agst Ref` against that reference, which is what actually knocks
+   * the invoice down. Absent ⇒ `On Account`, see `billTypeFor` below.
+   */
+  billRefName?: string | null;
 }
 
 export interface BankVoucherInput {
@@ -46,6 +79,36 @@ export interface BankVoucherInput {
 
 /** Under half a paisa is zero, matching the tolerance used elsewhere. */
 const EPSILON = 0.005;
+
+/**
+ * Is this counter-ledger one Tally is ageing?
+ *
+ * `BILL_WISE_GROUPS` is the same set that decides `ISBILLWISEON` on the ledger
+ * master, deliberately shared rather than restated — a ledger Tally ages and a
+ * voucher line that names no bill against it is precisely the bug this answers.
+ */
+function isPartyLedger(group: LedgerGroup | null | undefined): boolean {
+  return !!group && BILL_WISE_GROUPS.has(group);
+}
+
+/**
+ * What a bank line says about the bill it touches.
+ *
+ * `Agst Ref` when the accountant named the bill: that is a real settlement and
+ * Tally reduces the outstanding by this amount.
+ *
+ * `On Account` when nobody did — and this is the deliberate part. It is not a
+ * placeholder or a degraded mode; it is the *same posting Tally already makes*
+ * for an unallocated entry on a bill-wise ledger, written down explicitly
+ * instead of left to be inferred from an absent tag. Stating it buys two
+ * things: the voucher we send is the voucher Tally holds, so a diff between
+ * them means something; and an On Account balance is visible and settleable in
+ * Tally's Bill-wise Details, whereas the silence we used to send looked like a
+ * complete allocation to anyone reading our XML.
+ */
+function billTypeFor(billRefName: string | null): BillRefType {
+  return billRefName ? "Agst Ref" : "On Account";
+}
 
 export interface BankVoucherResult {
   draft: VoucherDraft | null;
@@ -100,15 +163,45 @@ export function buildBankVoucher(input: BankVoucherInput): BankVoucherResult {
   const bankSide: "DR" | "CR" = isOutflow ? "CR" : "DR";
   const otherSide: "DR" | "CR" = isOutflow ? "DR" : "CR";
 
-  const lines: VoucherLineInput[] = allocations.map((a) => ({
-    role: "ITEM",
-    ledgerId: a.ledgerId,
-    ledgerName: a.ledgerName,
-    amount: a.amount,
-    side: otherSide,
-    confidence: a.confidence ?? null,
-    mappedVia: null,
-  }));
+  /**
+   * The counter-ledger side, and the fix for the ageing bug.
+   *
+   * Every allocation used to be an ITEM, which is right for rent, salaries and
+   * the phone bill and wrong for the case that matters most: paying a supplier.
+   * A Sundry Creditors ledger is bill-wise in Tally, so an entry against it that
+   * names no bill is parked On Account — the invoice stays fully outstanding and
+   * an unapplied payment sits next to it, in every ageing report and every
+   * supplier statement the firm sends out. Only the *ledger's group* can tell
+   * the two cases apart, which is why `BankAllocation` now carries it.
+   *
+   * A party allocation is therefore given the PARTY role (so `exportXml` treats
+   * it as one) plus an explicit bill type. Anything else is untouched: an
+   * expense ledger is not aged, and a `BILLALLOCATIONS.LIST` on one is rejected
+   * by Tally outright.
+   */
+  const lines: VoucherLineInput[] = allocations.map((a) => {
+    const party = isPartyLedger(a.ledgerGroup);
+    const billRefName = a.billRefName?.trim() || null;
+    const role: LineRole = party ? "PARTY" : "ITEM";
+
+    return {
+      role,
+      ledgerId: a.ledgerId,
+      ledgerName: a.ledgerName,
+      amount: a.amount,
+      side: otherSide,
+      confidence: a.confidence ?? null,
+      mappedVia: null,
+      ...(party
+        ? {
+            billRefType: billTypeFor(billRefName),
+            // Null for On Account: there is no bill, and naming one would
+            // invent a reference Tally would then dutifully open.
+            billRefName,
+          }
+        : {}),
+    };
+  });
 
   lines.push({
     role: "BANK",
@@ -129,7 +222,31 @@ export function buildBankVoucher(input: BankVoucherInput): BankVoucherResult {
     // and a nameless plug line is not the way to find out about it.
   });
 
-  return { draft, errors: [] };
+  /**
+   * Re-attach the allocations the shared assembler does not carry.
+   *
+   * `buildVoucherFromLines` copies each draft line field by field and knows
+   * nothing about bills — that ignorance is why a journal, a bill and a bank row
+   * can share it — so the allocation is matched back on here.
+   *
+   * `sortOrder` is the index into the input array (it is assigned in order over
+   * the lines that survive, and every allocation survives: each was already
+   * required to exceed EPSILON). Role and ledger are still checked, because a
+   * silently mismatched pairing would put a supplier's bill reference on the
+   * electricity account, which is worse than no allocation at all.
+   */
+  const allocatedLines = draft.lines.map((l) => {
+    const source = lines[l.sortOrder];
+    if (!source?.billRefType) return l;
+    if (source.role !== l.role || source.ledgerId !== l.ledgerId) return l;
+    return {
+      ...l,
+      billRefType: source.billRefType,
+      billRefName: source.billRefName ?? null,
+    };
+  });
+
+  return { draft: { ...draft, lines: allocatedLines }, errors: [] };
 }
 
 /**

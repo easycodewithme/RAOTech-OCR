@@ -394,9 +394,13 @@ export async function buildVouchersForStatement(
       userId: input.userId,
       clientId: input.clientId,
     },
-    select: { id: true, name: true },
+    // `group` is what tells a supplier ledger from an expense ledger, and it is
+    // the whole input to the bill-allocation decision below: a payment to a
+    // Sundry Creditor has to name a bill, an electricity expense must not.
+    select: { id: true, name: true, group: true },
   });
   const ledgerName = new Map(ledgers.map((l) => [l.id, l.name]));
+  const ledgerGroup = new Map(ledgers.map((l) => [l.id, l.group]));
 
   const bankLedgerName = ledgerName.get(statement.bankLedgerId);
   if (!bankLedgerName) {
@@ -411,6 +415,7 @@ export async function buildVouchersForStatement(
       ? stored.map((a) => ({
           ledgerId: a.ledgerId,
           ledgerName: a.ledgerId ? ledgerName.get(a.ledgerId) ?? null : a.ledgerName,
+          ledgerGroup: a.ledgerId ? ledgerGroup.get(a.ledgerId) ?? null : null,
           amount: a.amount,
           confidence: t.confidence,
         }))
@@ -419,6 +424,7 @@ export async function buildVouchersForStatement(
             {
               ledgerId: t.ledgerId,
               ledgerName: ledgerName.get(t.ledgerId) ?? t.ledgerNameSnapshot,
+              ledgerGroup: ledgerGroup.get(t.ledgerId) ?? null,
               amount: (t.withdrawal || 0) > EPSILON ? t.withdrawal : t.deposit,
               confidence: t.confidence,
             },
@@ -566,6 +572,11 @@ async function persistBankVoucher(
           quantity: l.quantity ?? null,
           unit: l.unit ?? null,
           rate: l.rate ?? null,
+          // Written through for the same reason as in `createVoucher`: the push
+          // rebuilds its XML from the persisted line, so an allocation the
+          // builder decided and did not store is an allocation Tally never sees.
+          billRefType: l.billRefType ?? null,
+          billRefName: l.billRefName ?? null,
           sortOrder: l.sortOrder,
         })),
       },

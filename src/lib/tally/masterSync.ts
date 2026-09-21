@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import type { LedgerGroup, LedgerType } from "@/lib/accounting/types";
 
 /**
@@ -442,8 +442,70 @@ export interface MasterPullOutcome {
 }
 
 /**
- * Apply a MASTER_PULL result. Writes are sequential rather than batched: the
- * whole point is per-row reconciliation, and `createMany` cannot adopt.
+ * How many ledger writes go in one round trip.
+ *
+ * A real chart of accounts is 1,000-2,000 ledgers. The first version of this
+ * function wrote them one at a time, and round trips are the dominant cost in
+ * this app — the pooler is in ap-northeast-2, measured at ~160-290ms a query
+ * (see `src/lib/prisma.ts`). Two thousand of those is five to ten *minutes*,
+ * inside the single HTTP request the connector makes to report its result, so
+ * on any real client the request was killed part-way through: ledgers half
+ * written, job already marked terminal, company stuck at SYNCING for ever.
+ *
+ * At 200 a batch the same chart is roughly a dozen round trips — a couple of
+ * seconds. The size is a compromise: large enough that the trip count stops
+ * mattering, small enough that one statement stays a sane size for the pooler
+ * and that a batch which does die takes little work with it.
+ */
+const LEDGER_WRITE_CHUNK = 200;
+
+/**
+ * Local rather than imported from `syncJobs.ts`, which has the identical
+ * helper: that module already imports this one, and importing back would make
+ * the pair circular for the sake of four lines.
+ */
+function chunkList<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** The stored Tally identity of a ledger, as `applyMasterPull` reads it back. */
+interface LedgerIdentityRow extends ExistingLedgerRow {
+  tallyCompanyId: string | null;
+  tallyName: string | null;
+  tallyParent: string | null;
+  tallyReserved: boolean;
+}
+
+/**
+ * Apply a MASTER_PULL result.
+ *
+ * Written to be *bounded* and *resumable*, in that order, because a chart of
+ * accounts is the largest thing this app writes in one request:
+ *
+ *  - Bounded: the per-row `update`/`create` loop is gone. Rows that need
+ *    inserting go in chunked `createMany`s, rows whose stored Tally identity
+ *    already matches what Tally just reported are collapsed into one
+ *    `updateMany` per chunk that only touches `tallySyncedAt`, and only the
+ *    rows that genuinely changed are written individually — batched into a
+ *    `$transaction` per chunk, so a chunk is still one round trip.
+ *
+ *  - Resumable: the chunks commit as they go, and the whole function is
+ *    idempotent, so a request killed at chunk 7 of 10 leaves the first six
+ *    hundred ledgers adopted *with their GUIDs*. The next pull matches those on
+ *    GUID in pass 1 of `planLedgerReconciliation`, finds nothing to change, and
+ *    does the remaining work. Each attempt converges; none of them duplicates.
+ *    `status: READY` is still written last, so "the pull finished" means the
+ *    whole chart is in, and `applyJobResult` re-runs this when a replayed
+ *    result finds the company short of READY.
+ *
+ * Adoption semantics are untouched — they live in `planLedgerReconciliation`
+ * above and are the reason this is not simply a `createMany` of everything. A
+ * seeded ledger whose trimmed name matches a Tally ledger case-insensitively
+ * keeps its id, its mappings and its rule targets and merely gains a GUID.
+ * Every write below is keyed on the plan's `existingId`, so batching changes
+ * when rows are written, never which row is written.
  */
 export async function applyMasterPull(
   db: PrismaClient,
@@ -451,49 +513,115 @@ export async function applyMasterPull(
 ): Promise<MasterPullOutcome> {
   const incoming = input.ledgers ?? [];
 
+  // Wider than `planLedgerReconciliation` needs. The extra columns are what
+  // let an unchanged adoption be recognised as unchanged, which is what turns
+  // the second and every subsequent pull of the same chart — the common case,
+  // and the case a resumed pull is — into a handful of no-op writes.
   const existing = await db.ledger.findMany({
     where: { userId: input.userId, clientId: input.clientId },
-    select: { id: true, name: true, tallyGuid: true },
+    select: {
+      id: true,
+      name: true,
+      tallyGuid: true,
+      tallyCompanyId: true,
+      tallyName: true,
+      tallyParent: true,
+      tallyReserved: true,
+    },
   });
 
   const plan = planLedgerReconciliation(existing, incoming);
   const now = new Date();
-  let adopted = 0;
-  let created = 0;
+
+  const byId = new Map<string, LedgerIdentityRow>(existing.map((row) => [row.id, row]));
+
+  /** Adoptions whose identity columns already hold exactly these values. */
+  const unchangedIds: string[] = [];
+  /** Adoptions that genuinely differ, and so need their own statement. */
+  const changed: LedgerPlanEntry[] = [];
+  const inserts: Prisma.LedgerCreateManyInput[] = [];
 
   for (const entry of plan.entries) {
-    if (entry.existingId) {
-      await db.ledger.update({
-        where: { id: entry.existingId },
-        data: {
-          tallyCompanyId: input.tallyCompanyId,
-          tallyGuid: entry.guid,
-          tallyName: entry.tallyName,
-          tallyParent: entry.tallyParent,
-          tallyReserved: entry.reserved,
-          tallySyncedAt: now,
-        },
+    if (!entry.existingId) {
+      inserts.push({
+        userId: input.userId,
+        clientId: input.clientId,
+        name: entry.name,
+        group: entry.group,
+        ledgerType: entry.ledgerType,
+        isSeeded: false,
+        tallyCompanyId: input.tallyCompanyId,
+        tallyGuid: entry.guid,
+        tallyName: entry.tallyName,
+        tallyParent: entry.tallyParent,
+        tallyReserved: entry.reserved,
+        tallySyncedAt: now,
       });
-      adopted += 1;
-    } else {
-      await db.ledger.create({
-        data: {
-          userId: input.userId,
-          clientId: input.clientId,
-          name: entry.name,
-          group: entry.group,
-          ledgerType: entry.ledgerType,
-          isSeeded: false,
-          tallyCompanyId: input.tallyCompanyId,
-          tallyGuid: entry.guid,
-          tallyName: entry.tallyName,
-          tallyParent: entry.tallyParent,
-          tallyReserved: entry.reserved,
-          tallySyncedAt: now,
-        },
-      });
-      created += 1;
+      continue;
     }
+
+    const row = byId.get(entry.existingId);
+    const same =
+      !!row &&
+      row.tallyGuid === entry.guid &&
+      row.tallyCompanyId === input.tallyCompanyId &&
+      row.tallyName === entry.tallyName &&
+      row.tallyParent === entry.tallyParent &&
+      row.tallyReserved === entry.reserved;
+
+    if (same) unchangedIds.push(entry.existingId);
+    else changed.push(entry);
+  }
+
+  const adopted = unchangedIds.length + changed.length;
+  let created = 0;
+
+  /**
+   * Inserts first, so that a pull cut short has created the ledgers Tally has
+   * that we do not — the rows a voucher would otherwise be rejected for.
+   *
+   * `skipDuplicates` guards the one race this has: two pulls in flight at once
+   * (a user pressing sync twice, or a MASTER_CREATE's automatic read-back
+   * landing beside a manual pull) would both plan the same insert, and the
+   * second would otherwise violate (userId, clientId, name) and abort the whole
+   * chunk. Skipping is right rather than merely convenient — the row the other
+   * pull wrote holds the same GUID and the same name.
+   */
+  for (const batch of chunkList(inserts, LEDGER_WRITE_CHUNK)) {
+    // Counted from what the database actually inserted, not from what we
+    // planned to: with `skipDuplicates` those differ exactly when the race
+    // above happened, and the reported number should be the truth.
+    const result = await db.ledger.createMany({ data: batch, skipDuplicates: true });
+    created += result.count;
+  }
+
+  // The cheap half of the adoptions: nothing to say except "still there".
+  for (const batch of chunkList(unchangedIds, LEDGER_WRITE_CHUNK)) {
+    await db.ledger.updateMany({
+      where: { id: { in: batch } },
+      data: { tallySyncedAt: now },
+    });
+  }
+
+  // The expensive half. Each row carries its own GUID, name and parent, so
+  // there is no `updateMany` shape for them; a `$transaction` of the chunk is
+  // how they become one round trip instead of one each.
+  for (const batch of chunkList(changed, LEDGER_WRITE_CHUNK)) {
+    await db.$transaction(
+      batch.map((entry) =>
+        db.ledger.update({
+          where: { id: entry.existingId as string },
+          data: {
+            tallyCompanyId: input.tallyCompanyId,
+            tallyGuid: entry.guid,
+            tallyName: entry.tallyName,
+            tallyParent: entry.tallyParent,
+            tallyReserved: entry.reserved,
+            tallySyncedAt: now,
+          },
+        })
+      )
+    );
   }
 
   // Tally reports the open companies; the one this workspace is bound to is

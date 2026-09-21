@@ -1,4 +1,5 @@
 import type {
+  BillRefType,
   NormalizedInvoice,
   ResolvedLedgers,
   VoucherDraft,
@@ -6,6 +7,7 @@ import type {
   VoucherType,
 } from "./types";
 import { buildVoucherFromLines } from "./buildVoucherLines";
+import { normName } from "./normalize";
 import { matchStockItem, type StockItemIndex } from "./resolveStockItems";
 
 interface BuildOptions {
@@ -55,15 +57,77 @@ export function buildVoucher(
   const nonParty: "DR" | "CR" = isPurchase ? "DR" : "CR";
   const party: "DR" | "CR" = isPurchase ? "CR" : "DR";
 
+  /**
+   * How the party line allocates against a bill.
+   *
+   * An invoice *opens* an outstanding, so `New Ref` named after itself is
+   * right — that is what every voucher used to emit unconditionally, and for a
+   * purchase or a sale it was never wrong.
+   *
+   * A credit or debit note is the opposite document: it exists to cancel some
+   * or all of an invoice that already exists. Posted as `New Ref` it opens a
+   * *second* reference next to the one it was meant to settle, so the client's
+   * ageing shows the original still 100% outstanding with an unapplied credit
+   * sitting beside it, and Tally will never knock the two together on its own.
+   * `Agst Ref` named after the original is the entry an accountant would key by
+   * hand, and it is the only form that actually reduces the outstanding.
+   *
+   * The fallback matters as much as the rule: a return whose original nobody
+   * recorded still has to post. We cannot allocate it — there is no reference
+   * to name — so it behaves exactly as it did before. Refusing to post it, or
+   * inventing a reference for it, would both be worse than an unallocated
+   * credit note the accountant can settle in Tally.
+   */
+  const isReturn = voucherType === "CREDIT_NOTE" || voucherType === "DEBIT_NOTE";
+  const against = inv.againstInvoiceNumber?.trim() || null;
+  const partyBillRefType: BillRefType = isReturn && against ? "Agst Ref" : "New Ref";
+  const partyBillRefName = isReturn && against ? against : inv.invoiceNumber?.trim() || null;
+
   const lines: VoucherLineInput[] = [];
   const warnings: string[] = [];
+
+  /**
+   * The gate from `resolveStockItems.ts`, made explicit so the warning below
+   * can respect it.
+   *
+   * An absent or empty index means the workspace keeps no stock masters at all
+   * — a services client, or a firm that has simply never uploaded any. For them
+   * a ledger-only item line is the *correct* posting, and a warning on every
+   * line would be noise that teaches people to ignore the warnings that matter.
+   * Once there is at least one master, though, "this line moved no stock" stops
+   * being the normal case and becomes the thing nobody was told: the item is
+   * misspelt against the master, or the master was never created. That silence
+   * is the corruption this feature exists to prevent, so from that point on it
+   * is reported.
+   */
+  const stockIndex = opts.stockItems && opts.stockItems.size > 0 ? opts.stockItems : null;
+  /**
+   * Unmatched item names for the warning text: folded key -> first spelling
+   * seen. Folded, because "Bolt M6" and "bolt  m6" are the same missing master
+   * — listing both would read as two separate problems with two separate fixes.
+   */
+  const unmatchedNames = new Map<string, string>();
+  let unmatchedLines = 0;
+  let itemLines = 0;
 
   // 1) Item / expense lines, net of tax.
   if (inv.items.length > 0) {
     for (const { item, ledger } of resolved.itemLedgers) {
       // Only if the workspace actually holds a master for this item. No master
       // means no inventory entry, which is the pre-inventory behaviour exactly.
-      const stock = opts.stockItems ? matchStockItem(opts.stockItems, item.name) : null;
+      const stock = stockIndex ? matchStockItem(stockIndex, item.name) : null;
+
+      if (stockIndex) {
+        itemLines += 1;
+        if (!stock) {
+          unmatchedLines += 1;
+          const label = item.name?.trim();
+          const key = normName(label ?? "");
+          // A blank name is already MISSING_REQUIRED_FIELD / a bad extraction;
+          // naming it as `""` in this warning would only obscure the real ones.
+          if (label && key && !unmatchedNames.has(key)) unmatchedNames.set(key, label);
+        }
+      }
 
       lines.push({
         role: "ITEM",
@@ -87,6 +151,20 @@ export function buildVoucher(
             }
           : {}),
       });
+    }
+
+    if (unmatchedNames.size > 0) {
+      // Name the items. "Some items did not match" is unactionable; the fix is
+      // always either "create this master" or "this cell is misspelt", and both
+      // need the spelling the sheet actually used. Capped so a 500-line bill
+      // does not produce a warning nobody can read.
+      const SHOWN = 8;
+      const names = [...unmatchedNames.values()];
+      const shown = names.slice(0, SHOWN).map((n) => `"${n}"`).join(", ");
+      const more = names.length > SHOWN ? ` and ${names.length - SHOWN} more` : "";
+      warnings.push(
+        `${unmatchedLines} of ${itemLines} item line(s) matched no stock item master, so they post as ledger entries only and move no stock in Tally: ${shown}${more}. Create the master, or correct the spelling in the source, if this client's inventory should move.`
+      );
     }
   } else {
     // No line items extracted — one net line of subtotal less discount.
@@ -172,6 +250,8 @@ export function buildVoucher(
     side: party,
     confidence: resolved.party?.confidence ?? null,
     mappedVia: resolved.party?.via ?? null,
+    billRefType: partyBillRefType,
+    billRefName: partyBillRefName,
   });
 
   const draft = buildVoucherFromLines(
@@ -186,5 +266,26 @@ export function buildVoucher(
     { roundingTolerance: opts.roundingTolerance }
   );
 
-  return { ...draft, warnings: [...warnings, ...draft.warnings] };
+  /**
+   * Re-attach the allocation the shared assembler does not carry.
+   *
+   * `buildVoucherFromLines` copies each draft line field by field, so anything
+   * it has not been told about is dropped on the way through — and it is
+   * deliberately ignorant of what a party or a bill is, which is the whole
+   * reason a journal, a bank row and a scanned bill can share it. So the
+   * allocation is matched back on by role rather than pushed down into it. An
+   * invoice voucher has exactly one PARTY line, by construction above; a
+   * zero-total invoice has none, and then this is a no-op.
+   */
+  const allocatedLines = draft.lines.map((l) =>
+    l.role === "PARTY"
+      ? { ...l, billRefType: partyBillRefType, billRefName: partyBillRefName }
+      : l
+  );
+
+  return {
+    ...draft,
+    lines: allocatedLines,
+    warnings: [...warnings, ...draft.warnings],
+  };
 }

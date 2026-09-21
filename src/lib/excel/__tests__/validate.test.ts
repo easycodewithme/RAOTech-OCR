@@ -293,6 +293,62 @@ describe("NEGATIVE_AMOUNT", () => {
     expect(issues).toHaveLength(1);
     expect(issues[0].severity).toBe("warning");
   });
+
+  it("blocks a negative quantity, which reaches Tally intact as a stock movement", () => {
+    // Unlike a negative amount, a negative quantity is not dropped anywhere on
+    // the way: it is written out as <ACTUALQTY>-5 Nos</ACTUALQTY> and Tally
+    // takes it, so the client's stock goes down on a bill that puts it up.
+    const parsed = sheet(
+      ["Inv", "Date", "Party", "Item", "Qty", "Amount"],
+      [["INV-1", "05/08/2024", "Acme", "Widget", -5, 1000]]
+    );
+    const m = mapping({
+      itemMode: "WITH_ITEM",
+      fields: { invoiceNumber: 0, date: 1, partyName: 2, itemName: 3, quantity: 4, amount: 5 },
+    });
+    const issues = of(validateRows(parsed, m), "NEGATIVE_AMOUNT");
+    expect(issues).toHaveLength(1);
+    expect(issues[0].severity).toBe("error");
+    expect(blockedRows(validateRows(parsed, m)).has(0)).toBe(true);
+  });
+});
+
+describe("item mode without a quantity column", () => {
+  const withQty = mapping({
+    itemMode: "WITH_ITEM",
+    fields: { invoiceNumber: 0, date: 1, partyName: 2, itemName: 3, quantity: 4, amount: 5 },
+  });
+  const withoutQty = mapping({
+    itemMode: "WITH_ITEM",
+    fields: { invoiceNumber: 0, date: 1, partyName: 2, itemName: 3, amount: 5 },
+  });
+  const headers = ["Inv", "Date", "Party", "Item", "Qty", "Amount"];
+  const row: CellValue[] = ["INV-1", "05/08/2024", "Acme", "Widget", 2, 1000];
+
+  it("says so, at sheet scope, when the item name column is mapped and quantity is not", () => {
+    const issues = validateRows(sheet(headers, [row]), withoutQty);
+    const quantityIssue = issues.find((i) => i.message.includes('mapped to "quantity"'));
+    expect(quantityIssue).toBeDefined();
+    expect(quantityIssue!.row).toBe(SHEET_SCOPE);
+  });
+
+  it("warns rather than blocks — an amount-only item register is a correct sheet", () => {
+    const issues = validateRows(sheet(headers, [row]), withoutQty);
+    expect(issues.find((i) => i.message.includes('mapped to "quantity"'))!.severity).toBe(
+      "warning"
+    );
+    expect(hasBlockingIssues(issues)).toBe(false);
+  });
+
+  it("stays quiet when the quantity column is mapped", () => {
+    const issues = validateRows(sheet(headers, [row]), withQty);
+    expect(issues.some((i) => i.message.includes('mapped to "quantity"'))).toBe(false);
+  });
+
+  it("stays quiet on a WITHOUT_ITEM sheet, which has no item lines to quantify", () => {
+    const issues = validateRows(sheet(HEADERS, [okRow]), sane());
+    expect(issues.some((i) => i.message.includes('mapped to "quantity"'))).toBe(false);
+  });
 });
 
 describe("TOTAL_MISMATCH", () => {
