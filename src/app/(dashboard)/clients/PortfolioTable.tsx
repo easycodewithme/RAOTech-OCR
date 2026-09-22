@@ -3,8 +3,8 @@
 import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Clock, Loader2, Send, CheckCircle2 } from "lucide-react";
-import type { PortfolioRow } from "@/lib/portfolio";
-import { attentionRank } from "@/lib/portfolio";
+import type { PortfolioRow } from "@/lib/portfolioTypes";
+import { attentionRank } from "@/lib/portfolioTypes";
 import { formatCount, formatDate, formatRelative } from "@/lib/format";
 
 /**

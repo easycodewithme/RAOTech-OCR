@@ -95,9 +95,6 @@ type SaveIntent =
  * from another tab, and neither tells us. Fifteen seconds is short enough that
  * nobody finishes typing over a batch before the banner corrects itself, and
  * the endpoint is served from the server's in-process client-list cache, so
- * the cost is a round trip and no query.
- */
-const CLIENT_RECHECK_MS = 15_000;
 
 /**
  * OCR hands back whatever it read — a number, a string, sometimes nothing.
@@ -208,11 +205,7 @@ export default function UploadPage() {
     }
   }, []);
 
-  // Read it on mount, then keep it honest while a batch is open. The topbar
-  // switcher lives on this same screen and a second tab can switch too, and
-  // neither of them tells us; polling is the only thing that does. Focus is
-  // included because coming back from another tab is exactly when the answer
-  // has most likely changed.
+  // Read active client on mount, and re-sync on window focus (e.g. returning from another tab)
   useEffect(() => {
     let alive = true;
     async function sync() {
@@ -221,20 +214,13 @@ export default function UploadPage() {
       setActiveClient(next);
       setClientError(next ? null : "Could not read which client is active.");
     }
-    // The active client is server state that changes without us, so reading it
-    // here is a subscription rather than a render-time computation.
     void sync();
-    if (!documents.length) return () => { alive = false; };
-    const timer = window.setInterval(sync, CLIENT_RECHECK_MS);
     window.addEventListener("focus", sync);
     return () => {
       alive = false;
-      window.clearInterval(timer);
       window.removeEventListener("focus", sync);
     };
-    // Only whether a batch exists matters, not its contents — re-subscribing on
-    // every keystroke in an extracted field would restart the timer forever.
-  }, [readActiveClient, documents.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [readActiveClient]);
 
   // Pin the client the moment a batch starts, and let go once the batch is
   // gone. Pinning here rather than inside addFiles covers the case where the
