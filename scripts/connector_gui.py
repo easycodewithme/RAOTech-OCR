@@ -370,50 +370,40 @@ class TallyConnectorApp:
                 "osVersion": f"{platform.system()} {platform.release()}",
             }).encode("utf-8")
 
-            # Try chosen server first, then auto-fallback if 404
-            targets = [self.cloud_url]
-            if "localhost" in self.cloud_url and "https://rao-tech-ocr.vercel.app" not in targets:
-                targets.append("https://rao-tech-ocr.vercel.app")
-            elif "localhost" not in self.cloud_url and "http://localhost:3000" not in targets:
-                targets.append("http://localhost:3000")
+            target_url = self.cloud_url
+            try:
+                self.log(f"Connecting to {target_url}/api/connector/pair...")
+                req = urllib.request.Request(
+                    f"{target_url}/api/connector/pair",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
 
-            last_error = ""
-            for target_url in targets:
+                self.cloud_url = target_url
+                self.root.after(0, lambda u=target_url: self.server_var.set(u))
+                self.token = data.get("token", "")
+                self.device_id = data.get("deviceId", "")
+                self.device_name = data.get("deviceName", device_name)
+                self.paired = True
+                self._save_state()
+                self._update_paired_ui(True)
+                self.log(f"Successfully paired as '{self.device_name}' on {target_url}!")
+                self.root.after(0, lambda u=target_url: messagebox.showinfo("Connected", f"Device paired successfully with {u}!"))
+                return
+            except urllib.error.HTTPError as e:
+                err_msg = e.read().decode("utf-8", errors="replace")
                 try:
-                    self.log(f"Connecting to {target_url}/api/connector/pair...")
-                    req = urllib.request.Request(
-                        f"{target_url}/api/connector/pair",
-                        data=payload,
-                        headers={"Content-Type": "application/json"},
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(req, timeout=10) as resp:
-                        data = json.loads(resp.read().decode("utf-8"))
-
-                    self.cloud_url = target_url
-                    self.root.after(0, lambda u=target_url: self.server_var.set(u))
-                    self.token = data.get("token", "")
-                    self.device_id = data.get("deviceId", "")
-                    self.device_name = data.get("deviceName", device_name)
-                    self.paired = True
-                    self._save_state()
-                    self._update_paired_ui(True)
-                    self.log(f"Successfully paired as '{self.device_name}' on {target_url}!")
-                    self.root.after(0, lambda u=target_url: messagebox.showinfo("Connected", f"Device paired successfully with {u}!"))
-                    return
-                except urllib.error.HTTPError as e:
-                    err_msg = e.read().decode("utf-8", errors="replace")
-                    try:
-                        err_json = json.loads(err_msg)
-                        last_error = err_json.get("error", f"HTTP {e.code}")
-                    except Exception:
-                        last_error = f"HTTP {e.code}"
-                    self.log(f"Pair on {target_url} answered: {last_error}")
-                    if e.code != 404:
-                        break
-                except Exception as e:
-                    last_error = str(e)
-                    self.log(f"Connection to {target_url} failed: {e}")
+                    err_json = json.loads(err_msg)
+                    last_error = err_json.get("error", f"HTTP {e.code}")
+                except Exception:
+                    last_error = f"HTTP {e.code}"
+                self.log(f"Pair on {target_url} answered: {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                self.log(f"Connection to {target_url} failed: {e}")
 
             self.root.after(0, lambda err=last_error: messagebox.showerror(
                 "Pairing Failed",
