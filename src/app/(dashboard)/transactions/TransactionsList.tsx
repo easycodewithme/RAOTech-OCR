@@ -8,7 +8,6 @@ import {
   Landmark,
   ArrowRight,
   CheckSquare,
-  Download,
   Loader2,
   AlertTriangle,
   Send,
@@ -161,15 +160,6 @@ export default function TransactionsList({
   const { toast } = useToast();
   // Populated when the server refuses an export because Tally would reject it.
   const [blocked, setBlocked] = useState<ExportIssue[] | null>(null);
-  const [hasDemoAccess, setHasDemoAccess] = useState(false);
-  const [demoAccessChecked, setDemoAccessChecked] = useState(false);
-
-  useEffect(() => {
-    void fetch("/api/demo")
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => setHasDemoAccess(Boolean(data?.booking)))
-      .finally(() => setDemoAccessChecked(true));
-  }, []);
 
   const voucherIds = useMemo(() => vouchers.map((v) => v.id), [vouchers]);
   const { syncs, refresh: refreshSyncs } = useVoucherSyncs(voucherIds);
@@ -424,59 +414,34 @@ export default function TransactionsList({
               Delete From Tally ({deletable.length})
             </Button>
           )}
-          {/* Two guards, and they are not the same guard.
-              Demo access is a business gate: without a confirmed booking the
-              button routes to the booking page instead of exporting, so it
-              stays clickable with nothing selected.
-              The selection is a correctness gate: exporting with an empty
-              body makes the route read it as "all approved vouchers". That
-              one only applies once the export can actually happen. */}
-          <Button
-            size="sm"
-            disabled={busy || !demoAccessChecked || (hasDemoAccess && !selected.size)}
-            onClick={() =>
-              hasDemoAccess
-                ? setConfirmExport([...selected])
-                : router.push("/book-your-demo?returnTo=/transactions")
-            }
-            className="cursor-pointer bg-green-600 hover:bg-green-500 text-white"
-          >
-            <Download className="mr-2 h-4 w-4" />
-            {demoAccessChecked && !hasDemoAccess
-              ? "Book a demo to export"
-              : `Export XML (${selected.size})`}
-          </Button>
-          {/* `pushBlocked` was computed from the pre-flight result and then
-              never read, so the panel below could say a voucher would be
-              rejected while this button still sent it — the check ran and
-              nothing acted on it. Blocked now, along with an empty selection,
-              which otherwise posted an empty body that the route reads as
-              "all approved vouchers".
-
-              The demo gate stays separate: with no booking the button is not
-              an action, it is a link to the booking page, so it must remain
-              clickable with nothing selected. */}
           <Button
             size="sm"
             disabled={
-              !demoAccessChecked ||
               busy ||
-              (hasDemoAccess && (!selected.size || preflighting || pushBlocked))
+              !selected.size ||
+              preflighting ||
+              pushBlocked
             }
-            className="bg-[#0b6b3a] hover:bg-[#0a5c32]"
-            onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/book-your-demo?returnTo=/transactions")}
+            className="cursor-pointer bg-[#0b6b3a] hover:bg-[#0a5c32] text-white disabled:opacity-75 disabled:cursor-not-allowed"
+            onClick={() => void push.start([...selected])}
             title={
-              hasDemoAccess && pushBlocked
+              pushBlocked
                 ? "Pre-flight found problems Tally would reject. Fix them below, or deselect those vouchers."
                 : undefined
             }
           >
-            <Send className="mr-2 h-4 w-4" />
-            {demoAccessChecked && !hasDemoAccess
-              ? "Book a demo to push"
+            {preflighting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="mr-2 h-4 w-4" />
+            )}
+            {preflighting
+              ? "Checking..."
               : pushBlocked
                 ? `Blocked (${selected.size})`
-                : `Push to Tally (${selected.size})`}
+                : selected.size > 0
+                  ? `Export to Tally (${selected.size})`
+                  : "Export to Tally"}
           </Button>
         </div>
       </div>
