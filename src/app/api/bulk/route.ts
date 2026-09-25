@@ -3,6 +3,18 @@ import { backendFetch } from "@/lib/backend";
 import { getActiveClient } from "@/lib/clientContext";
 
 /**
+ * The OCR backend runs on a free Render instance, which spins down when idle
+ * and takes ~24s to wake. Vercel's Hobby default is 10s, so the first upload
+ * after a quiet spell was killed mid-flight while the backend was still
+ * booting — the screen came back blank, and a retry a minute later worked.
+ * That read as "extraction is broken" when it was only the cold start.
+ *
+ * 60s is the Hobby ceiling and clears a measured 24s wake with room to spare.
+ */
+export const maxDuration = 60;
+
+
+/**
  * The shape a job id from the OCR backend is allowed to take.
  *
  * A character allowlist rather than a uuid parse, because the id is the

@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
-import { backendFetch } from "@/lib/backend";
+import { backendFetch, BackendTimeoutError } from "@/lib/backend";
 import { withRouteLogging } from "@/lib/trace";
+
+/**
+ * The OCR backend runs on a free Render instance, which spins down when idle
+ * and takes ~24s to wake. Vercel's Hobby default is 10s, so the first upload
+ * after a quiet spell was killed mid-flight while the backend was still
+ * booting — the screen came back blank, and a retry a minute later worked.
+ * That read as "extraction is broken" when it was only the cold start.
+ *
+ * 60s is the Hobby ceiling and clears a measured 24s wake with room to spare.
+ */
+export const maxDuration = 60;
+
 
 async function processInvoice(req: Request) {
   try {
@@ -34,6 +46,12 @@ async function processInvoice(req: Request) {
     return NextResponse.json(result);
 
   } catch (error) {
+    // A cold backend is the commonest failure here and it is not an outage.
+    // Saying so beats "is the Python server running on port 8001?", which is a
+    // local-development message that reaches users in production.
+    if (error instanceof BackendTimeoutError) {
+      return NextResponse.json({ error: error.message }, { status: 504 });
+    }
     console.error("[PROCESS_INVOICE_ERROR]", error);
     return NextResponse.json(
       { error: "Failed to connect to OCR backend. Is the Python server running on port 8001?" },

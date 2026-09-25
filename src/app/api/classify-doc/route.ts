@@ -2,6 +2,18 @@ import { NextResponse } from "next/server";
 import { detectDocumentType } from "@/lib/docs/detectType";
 import { backendFetch } from "@/lib/backend";
 
+/**
+ * The OCR backend runs on a free Render instance, which spins down when idle
+ * and takes ~24s to wake. Vercel's Hobby default is 10s, so the first upload
+ * after a quiet spell was killed mid-flight while the backend was still
+ * booting — the screen came back blank, and a retry a minute later worked.
+ * That read as "extraction is broken" when it was only the cold start.
+ *
+ * 60s is the Hobby ceiling and clears a measured 24s wake with room to spare.
+ */
+export const maxDuration = 60;
+
+
 /** Map OCR backend doc_type → client DetectedDocType */
 function mapBackendType(docType: string): string {
   const t = (docType || "").toLowerCase();

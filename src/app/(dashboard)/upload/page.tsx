@@ -436,8 +436,16 @@ export default function UploadPage() {
       const extracted = json.data || json;
       // Refine type from extracted content
       const refined = detectDocumentType({ fileName: doc.file.name, extracted });
-      if (refined === "bank") setDocType("bank");
-      setAutoDetected(`Detected: ${refined.replace("_", " ")}`);
+      /* Detection runs *after* the document has already been sent to one
+         extractor, so flipping the mode here cannot change what was extracted —
+         it only changes which view tries to render it, and the other view has
+         no data to show. Say what was detected and let the user re-extract. */
+      const mismatched = refined === "bank" && docType !== "bank";
+      setAutoDetected(
+        mismatched
+          ? "Detected: bank statement — switch to Bank above and extract again"
+          : `Detected: ${refined.replace("_", " ")}`
+      );
 
       setDocuments((prev) =>
         prev.map((d) =>
@@ -1192,7 +1200,14 @@ export default function UploadPage() {
                 </div>
 
                 {doc.extractedData ? (
-                  docType === "bank" ? (
+                  /* Render what the data actually is, not what the toggle says.
+                     `docType` is page-global and was being flipped by one
+                     document's detection, which swapped every card on screen to
+                     BankSummary. BankSummary reads `transactions` — a key the
+                     invoice extractor never returns — so the panel rendered
+                     "0 transactions" over an empty table and looked like a
+                     failed extraction when the extraction had been fine. */
+                  Array.isArray((doc.extractedData as { transactions?: unknown[] }).transactions) ? (
                     <BankSummary data={doc.extractedData} />
                   ) : (
                   <>

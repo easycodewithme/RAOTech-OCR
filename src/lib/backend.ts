@@ -21,9 +21,43 @@ export function backendHeaders(extra: Record<string, string> = {}): Record<strin
  * `fetch` against the backend with auth applied.
  * `path` is root-relative, e.g. "/extract".
  */
+/**
+ * How long to wait on the backend before giving up.
+ *
+ * It runs on a free Render instance that spins down when idle; a measured cold
+ * start is ~24s. Without a deadline this `fetch` simply hangs until the
+ * platform kills the whole function, which surfaces as a blank screen with no
+ * error — the reader is left thinking extraction silently produced nothing.
+ *
+ * 45s sits under the route's own `maxDuration = 60` so the timeout fires here,
+ * where it can be explained, rather than in the platform where it cannot.
+ */
+const BACKEND_TIMEOUT_MS = 45_000;
+
+/** Thrown when the backend did not answer in time, so callers can say why. */
+export class BackendTimeoutError extends Error {
+  constructor() {
+    super(
+      "The OCR service did not respond in time. It sleeps when idle and takes " +
+        "around half a minute to wake — try again in a moment."
+    );
+    this.name = "BackendTimeoutError";
+  }
+}
+
 export function backendFetch(path: string, init: RequestInit = {}) {
   const headers = backendHeaders(
     (init.headers as Record<string, string> | undefined) ?? {}
   );
-  return fetch(`${BACKEND_URL}${path}`, { ...init, headers });
+  return fetch(`${BACKEND_URL}${path}`, {
+    ...init,
+    headers,
+    // Caller-supplied signals win; this is only the default ceiling.
+    signal: init.signal ?? AbortSignal.timeout(BACKEND_TIMEOUT_MS),
+  }).catch((e) => {
+    if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
+      throw new BackendTimeoutError();
+    }
+    throw e;
+  });
 }
