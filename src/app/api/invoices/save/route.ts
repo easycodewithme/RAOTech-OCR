@@ -222,6 +222,7 @@ export async function POST(req: Request) {
     );
   } catch (error) {
     console.error("[INVOICE_SAVE_ERROR]", error);
-    return NextResponse.json({ error: "Failed to save invoice" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to save invoice";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

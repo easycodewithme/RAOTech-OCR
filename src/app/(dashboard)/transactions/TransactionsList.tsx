@@ -416,18 +416,30 @@ export default function TransactionsList({
           )}
           <Button
             size="sm"
-            disabled={
-              busy ||
-              !selected.size ||
-              preflighting ||
-              pushBlocked
-            }
-            className="cursor-pointer bg-[#0b6b3a] hover:bg-[#0a5c32] text-white disabled:opacity-75 disabled:cursor-not-allowed"
-            onClick={() => void push.start([...selected])}
+            disabled={busy || preflighting || pushBlocked}
+            className="cursor-pointer bg-[#0b6b3a] hover:bg-[#08522c] text-white !opacity-100 disabled:!opacity-100 disabled:bg-[#0b6b3a] disabled:text-white disabled:cursor-not-allowed shadow-sm font-medium transition-colors"
+            onClick={() => {
+              if (!selected.size) {
+                const approvedIds = filtered
+                  .filter((v) => v.status === "APPROVED" && !v.hasUnmapped)
+                  .map((v) => v.id);
+
+                if (approvedIds.length > 0) {
+                  setSelected(new Set(approvedIds));
+                  toast(`Selected ${approvedIds.length} approved voucher(s). Click Export to Tally to send.`, "info");
+                } else {
+                  toast("No approved vouchers ready to export. Please approve vouchers first.", "info");
+                }
+                return;
+              }
+              void push.start([...selected]);
+            }}
             title={
               pushBlocked
                 ? "Pre-flight found problems Tally would reject. Fix them below, or deselect those vouchers."
-                : undefined
+                : !selected.size
+                  ? "Click to select approved vouchers and export to Tally"
+                  : undefined
             }
           >
             {preflighting ? (
