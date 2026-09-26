@@ -10,6 +10,7 @@ import {
   XCircle,
   Clock,
   CheckCircle2,
+  Copy,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ export default async function Dashboard() {
 
   const {
     invoiceCount,
+    duplicateCount = 0,
     draftCount,
     approvedCount,
     postedCount,
@@ -153,7 +155,7 @@ export default async function Dashboard() {
           label="Unmapped Parties"
           value={unmappedParties.toString()}
           href="/transactions"
-          alert={unmappedParties > 0}
+          bg="var(--spx-card)"
         />
       </div>
 
@@ -198,10 +200,8 @@ export default async function Dashboard() {
         />
       </div>
 
-      {/* Two columns, not four: the container paints the 1px gap colour, so a
-          half-filled four-column row renders the empty cells as a grey slab. */}
       <div
-        className="grid grid-cols-2"
+        className="grid grid-cols-2 lg:grid-cols-4"
         style={{ gap: "1px", background: "var(--spx-border)", marginBottom: "24px" }}
       >
         {/* Stuck is not the same as failed and is worth its own number: it
@@ -221,7 +221,16 @@ export default async function Dashboard() {
           icon={<ClipboardList style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
           label="Invoices"
           value={invoiceCount.toString()}
+          href="/transactions"
         />
+        <StatCard
+          icon={<Copy style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
+          label="Duplicate Invoices"
+          value={duplicateCount.toString()}
+          href="/transactions"
+          valueColor={duplicateCount > 0 ? "#9333ea" : undefined}
+        />
+        <div style={{ background: "var(--spx-canvas)" }} />
       </div>
 
       {/* ── Main Grid: Table + Quick Actions ── */}
@@ -492,6 +501,7 @@ function StatCard({
   label,
   value,
   sub,
+  bg,
   valueColor,
   href,
   alert = false,
@@ -513,7 +523,7 @@ function StatCard({
       className="min-w-0 transition"
       style={{
         padding: "16px 18px",
-        background: alert ? "rgba(229, 62, 62, 0.04)" : "var(--spx-card)",
+        background: bg || (alert ? "rgba(229, 62, 62, 0.04)" : "var(--spx-card)"),
         borderRight: alert ? "2px solid rgba(229, 62, 62, 0.5)" : undefined,
       }}
     >

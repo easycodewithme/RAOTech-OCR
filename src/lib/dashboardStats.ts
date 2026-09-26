@@ -15,6 +15,7 @@ import { traceAsync } from "@/lib/trace";
  */
 export interface DashboardStats {
   invoiceCount: number;
+  duplicateCount: number;
   draftCount: number;
   approvedCount: number;
   /**
@@ -110,6 +111,8 @@ export async function getDashboardData(
       SELECT
         (SELECT COUNT(*)::int FROM "Invoice"
           WHERE "userId" = ${userId} AND "clientId" = ${clientId}) AS "invoiceCount",
+        (SELECT COUNT(*)::int FROM "Invoice"
+          WHERE "userId" = ${userId} AND "clientId" = ${clientId} AND "isDuplicate" = true) AS "duplicateCount",
         (SELECT COUNT(*)::int FROM "Voucher"
           WHERE "userId" = ${userId} AND "clientId" = ${clientId} AND status = 'DRAFT') AS "draftCount",
         (SELECT COUNT(*)::int FROM "Voucher"
