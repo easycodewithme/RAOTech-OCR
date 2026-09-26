@@ -228,7 +228,6 @@ export default async function Dashboard() {
           label="Duplicate Invoices"
           value={duplicateCount.toString()}
           href="/transactions"
-          valueColor={duplicateCount > 0 ? "#9333ea" : undefined}
         />
         <div style={{ background: "var(--spx-canvas)" }} />
       </div>
