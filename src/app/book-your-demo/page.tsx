@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import MarketingNavbar from "@/components/marketing-navbar";
 import { useEffect, useState } from "react";
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -40,20 +40,10 @@ function DemoPageContent() {
   }
 
   return (
-    <main className="min-h-screen bg-background px-6 py-8 md:py-12 text-foreground">
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <MarketingNavbar />
+      <main className="flex-1 px-6 py-8 md:py-12">
       <div className="mx-auto max-w-6xl">
-        <div className="flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3 text-xl font-bold tracking-tight">
-            <span>RAO AI</span>
-            <span className="font-mono text-[11px] font-normal tracking-[0.2em] text-muted-foreground uppercase">
-              PLATFORM
-            </span>
-          </Link>
-          <Link href="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-            View pricing
-          </Link>
-        </div>
-
         <section className="mt-10 grid gap-8 lg:grid-cols-12 items-start">
           {/* Left Column: Details & Action */}
           <div className="space-y-6 lg:col-span-5">
@@ -139,7 +129,8 @@ function DemoPageContent() {
           </div>
         </section>
       </div>
-    </main>
+      </main>
+    </div>
   );
 }
 
