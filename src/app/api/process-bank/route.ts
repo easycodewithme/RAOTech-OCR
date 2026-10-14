@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { backendFetch } from "@/lib/backend";
 import { withRouteLogging } from "@/lib/trace";
 
+export const maxDuration = 300;
+
 // Proxy a bank statement file to the FastAPI /extract-bank endpoint
 async function processBank(req: Request) {
   try {

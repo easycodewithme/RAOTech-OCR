@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { backendFetch } from "@/lib/backend";
 import { withRouteLogging } from "@/lib/trace";
 
+export const maxDuration = 300;
+
 async function processInvoice(req: Request) {
   try {
     const formData = await req.formData();
