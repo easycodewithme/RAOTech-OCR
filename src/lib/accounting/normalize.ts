@@ -1,30 +1,91 @@
 import type { NormalizedInvoice, NormalizedItem } from "./types";
 
-/** Parse a money-ish value (number or string with currency symbols) to a number. */
+/** Parse a money-ish value (number or string with currency symbols) to a number.
+ *
+ * Handles:
+ *  - Plain numbers: 396190.19
+ *  - Indian comma-separated: "3,96,190.19"  → 396190.19
+ *  - Currency-prefixed: "₹3,96,190.19"     → 396190.19
+ *  - Multiple-dot European: "3.96.190,19"   → 396190.19
+ */
 export const cleanMoney = (val: unknown): number => {
   if (typeof val === "number") return isFinite(val) ? val : 0;
   if (typeof val === "string") {
-    const n = parseFloat(val.replace(/[^0-9.-]+/g, ""));
+    // Strip currency symbols and whitespace
+    let s = val.replace(/[₹$€£\s]/g, "").trim();
+    if (!s) return 0;
+
+    // Detect European format: "1.234.567,89" (dots as thousands, comma as decimal)
+    const euroFormat = /^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s);
+    if (euroFormat) {
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      // Standard / Indian: remove all commas (thousand separators), keep last dot
+      // "3,96,190.19" → "396190.19"
+      // "3.96.190.19" (multi-dot, no decimal) → treat dots as thousand sep
+      const dotCount = (s.match(/\./g) ?? []).length;
+      if (dotCount > 1) {
+        // More than one dot → all dots are thousand separators, no decimal
+        s = s.replace(/[^0-9]/g, "");
+      } else {
+        s = s.replace(/,/g, "");
+      }
+    }
+
+    const n = parseFloat(s);
     return isFinite(n) ? n : 0;
   }
   return 0;
 };
 
+
 /**
- * Parse a date value, handling Indian DD/MM/YYYY and DD-MM-YYYY formats.
- * Falls back to the current date when unparseable (matches prior behaviour).
+ * Parse a date value, handling Indian formats like DD/MM/YYYY, DD-MM-YY, 14-Sep-26, 14-Sep-2026.
+ * Falls back to current date when unparseable so Tally dates are never missing or NaN.
  */
 export const cleanDate = (val: unknown): Date => {
   if (!val) return new Date();
   if (val instanceof Date) return isNaN(val.getTime()) ? new Date() : val;
   if (typeof val === "string") {
-    const ddmmyyyy = val.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    const s = val.trim();
+    if (!s) return new Date();
+
+    // 1. DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY or DD/MM/YY (support 2-digit and 4-digit years)
+    const ddmmyyyy = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
     if (ddmmyyyy) {
-      const d = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
-      if (!isNaN(d.getTime())) return d;
+      const day = parseInt(ddmmyyyy[1], 10);
+      const month = parseInt(ddmmyyyy[2], 10);
+      let year = parseInt(ddmmyyyy[3], 10);
+      if (year < 100) year += 2000;
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        const d = new Date(year, month - 1, day);
+        if (!isNaN(d.getTime())) return d;
+      }
     }
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? new Date() : d;
+
+    // 2. DD-MMM-YY or DD-MMM-YYYY (e.g. "14-Sep-26", "14-Sep-2026", "14 Sep 2026")
+    const ddmmmyyyy = s.match(/^(\d{1,2})[\/\-\.\s]+([a-zA-Z]{3,9})[\/\-\.\s]+(\d{2,4})$/);
+    if (ddmmmyyyy) {
+      const day = parseInt(ddmmmyyyy[1], 10);
+      const monthStr = ddmmmyyyy[2].toLowerCase();
+      let year = parseInt(ddmmmyyyy[3], 10);
+      if (year < 100) year += 2000;
+      const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+      const monthIdx = months.findIndex((m) => monthStr.startsWith(m));
+      if (monthIdx !== -1 && day >= 1 && day <= 31) {
+        const d = new Date(year, monthIdx, day);
+        if (!isNaN(d.getTime())) return d;
+      }
+    }
+
+    // 3. Fallback to standard JS Date parsing
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      if (d.getFullYear() < 1970 && d.getFullYear() >= 1900) {
+        d.setFullYear(d.getFullYear() + 100);
+      }
+      return d;
+    }
   }
   return new Date();
 };
@@ -111,6 +172,15 @@ export function normalizeInvoice(
     cgst: cleanMoney(d.cgst),
     sgst: cleanMoney(d.sgst),
     igst: cleanMoney(d.igst),
+    // Read even though OCR rarely finds one: `buildVoucher` gates its cess line
+    // on this value, so leaving it unread meant a scanned invoice that *did*
+    // carry compensation cess silently posted without it, leaving the voucher
+    // short by that amount.
+    cess: cleanMoney(d.cess),
+    // The invoice a credit or debit note reverses, when the document says so.
+    // Both spellings appear in extractor output depending on the prompt used.
+    againstInvoiceNumber: str(d.against_invoice_number ?? d.original_invoice_number),
+    againstInvoiceDate: cleanDate(d.against_invoice_date ?? d.original_invoice_date),
     discount: cleanMoney(d.discount),
     total: cleanMoney(d.total_amount),
     items: normalizeItems(d.items),

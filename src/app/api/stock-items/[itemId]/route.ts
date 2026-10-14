@@ -71,6 +71,47 @@ export async function PATCH(
       data.alias = String(body.alias ?? "").trim() || null;
     }
 
+    /**
+     * Opening stock — what the client held before this app started keeping
+     * their books.
+     *
+     * Editable for the life of the item, unlike the unit. It is not a movement
+     * and changing it does not contradict anything already posted: it shifts
+     * the starting point every balance is counted from, which is exactly what
+     * someone correcting a mis-typed opening quantity means to do.
+     *
+     * Blank clears it rather than storing zero. "No opening balance recorded"
+     * and "opened with nothing" read the same on the summary and mean
+     * different things to the person who has to decide whether to go and look
+     * it up.
+     */
+    for (const field of ["openingQty", "openingRate"] as const) {
+      if (body[field] === undefined) continue;
+      const raw = body[field];
+      if (raw === null || raw === "") {
+        data[field] = null;
+        continue;
+      }
+      const n = Number(raw);
+      if (!Number.isFinite(n)) {
+        return NextResponse.json(
+          {
+            error: `${
+              field === "openingQty" ? "Opening quantity" : "Opening rate"
+            } has to be a number.`,
+          },
+          { status: 400 }
+        );
+      }
+      if (field === "openingRate" && n < 0) {
+        return NextResponse.json(
+          { error: "An opening rate cannot be negative." },
+          { status: 400 }
+        );
+      }
+      data[field] = n;
+    }
+
     if (!Object.keys(data).length) {
       return NextResponse.json({ error: "Nothing to change." }, { status: 400 });
     }
@@ -80,15 +121,21 @@ export async function PATCH(
      * to go back into the next MASTER_CREATE. Clearing `tallySyncedAt` is what
      * that queue reads (`buildMasterCreatePayload` selects on it) — and the
      * push is idempotent, so a re-send ALTERs rather than duplicating.
+     *
+     * Only fields that actually appear in `stockItemXml` count. Opening stock
+     * does not: it is an app-side figure the Stock summary counts from and no
+     * tag in the master XML carries it, so re-queueing on an opening-stock
+     * edit would re-ALTER a master in the client's books to send them bytes
+     * identical to the ones already there.
      */
-    if (item.tallySyncedAt) data.tallySyncedAt = null;
+    const TALLY_VISIBLE = ["unit", "hsnCode", "gstRate", "alias"] as const;
+    const requeued = !!item.tallySyncedAt && TALLY_VISIBLE.some((f) => f in data);
+    if (requeued) data.tallySyncedAt = null;
 
     const updated = await prisma.stockItem.update({ where: { id: itemId }, data });
     return NextResponse.json({
       item: updated,
-      ...(item.tallySyncedAt
-        ? { note: "Queued to update in Tally on the next sync." }
-        : {}),
+      ...(requeued ? { note: "Queued to update in Tally on the next sync." } : {}),
     });
   } catch (error) {
     console.error("[STOCK_ITEM_PATCH]", error);

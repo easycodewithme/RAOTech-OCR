@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getActiveClient } from "@/lib/clientContext";
 import { buildVoucherDeletePayload, enqueueJob } from "@/lib/tally/syncJobs";
 import { requireDemoAccess } from "@/lib/demoAccess";
+import { recordAuditEvent, vouchersPhrase } from "@/lib/audit";
 
 /**
  * POST /api/tally/delete
@@ -46,7 +47,11 @@ export async function POST(req: Request) {
         state: "POSTED",
         voucher: { userId: user.id, clientId: client.id },
       },
-      select: { voucherId: true },
+      // `remoteId` comes along for the audit row below. It is the only handle
+      // Tally accepts for an existing entry and it exists nowhere but this
+      // database — once this delete succeeds and the sync row moves to DELETED,
+      // the audit event is the last place the id is written down.
+      select: { voucherId: true, remoteId: true },
     });
 
     if (!syncs.length) {
@@ -80,6 +85,33 @@ export async function POST(req: Request) {
     await prisma.voucherSync.updateMany({
       where: { voucherId: { in: voucherIds }, tallyCompanyId: company.id },
       data: { state: "SENDING", jobId: job.id, lastAttemptAt: new Date() },
+    });
+
+    // Deletions were recorded nowhere at all before this. Of everything the app
+    // does, removing entries from a client's live books is the one action a firm
+    // most needs to be able to name a person for — and it is recorded here at
+    // the point the job is *queued*, not when it completes, because the record
+    // has to survive the connector never reporting back. The metadata says
+    // `queued`, so nobody reads it as proof the entries are gone.
+    await recordAuditEvent({
+      userId: user.id,
+      clientId: client.id,
+      action: "VOUCHERS_DELETED_FROM_TALLY",
+      entityType: "VOUCHER",
+      entityId: voucherIds.length === 1 ? voucherIds[0] : null,
+      summary: `Queued deletion of ${vouchersPhrase(voucherIds.length)} from Tally (${
+        company.companyName
+      }) for ${client.name}`,
+      metadata: {
+        outcome: "queued",
+        jobId: job.id,
+        voucherCount: voucherIds.length,
+        voucherIds,
+        requestedIds: ids,
+        tallyCompanyId: company.id,
+        tallyCompanyName: company.companyName,
+        remoteIds: syncs.map((s) => s.remoteId),
+      },
     });
 
     return NextResponse.json({ jobIds: [job.id], voucherIds });

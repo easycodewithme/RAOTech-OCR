@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 148 36" width="148" height="36" fill="none">
+  <!-- Tally Prime Emblem -->
+  <g transform="translate(2, 2)">
+    <path d="M16 2 L28 16 L16 30 L4 16 Z" fill="#004b87" />
+    <path d="M16 5 L25 16 L16 27 L7 16 Z" fill="#003560" opacity="0.25" />
+    <path d="M20 5 L30 16 L27 19 L16 9 Z" fill="#f26522" />
+    <path d="M9 16 L16 23 L13 26 L6 19 Z" fill="#ffb81c" />
+    <!-- T core -->
+    <path d="M12 11 H20 V14 H17.5 V21 H14.5 V14 H12 Z" fill="#ffffff" />
+  </g>
+  <!-- Wordmark -->
+  <text x="38" y="23" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="19" font-weight="800" fill="#0c2340" letter-spacing="-0.5">Tally</text>
+  <text x="86" y="23" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="19" font-weight="700" fill="#0066cc" letter-spacing="0.2">Prime</text>
+  <circle cx="140" cy="11" r="2" stroke="#64748b" stroke-width="0.8" fill="none" />
+  <text x="139" y="12.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="3" font-weight="700" fill="#64748b" text-anchor="middle">R</text>
+</svg>

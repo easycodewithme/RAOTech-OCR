@@ -44,6 +44,7 @@ model User {
   syncJobs         SyncJob[]
   demoBooking      DemoBooking?
   googleOAuthToken GoogleOAuthToken?
+  auditEvents      AuditEvent[]
 
   ownedOrgs       Organization[]   @relation("OrgOwner")
   orgMemberships  OrgMember[]
@@ -89,6 +90,7 @@ model Client {
   excelUploads     ExcelUpload[]
   mappingTemplates MappingTemplate[]
   syncJobs         SyncJob[]
+  auditEvents      AuditEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -160,6 +162,18 @@ model Invoice {
   ackNo      String?
   ewayBillNo String?
 
+  /// The document a credit or debit note reverses.
+  ///
+  /// Without this a return could only ever open a *new* bill reference, leaving
+  /// the invoice it was cancelling fully outstanding in the client's ageing —
+  /// and GSTR-1 Table 9B (CDNR) requires exactly these two values, so the
+  /// return was unfilable as well as unallocated. Stored as the number and date
+  /// rather than a foreign key because the original is very often not in this
+  /// workspace at all: the firm may have keyed it straight into Tally, or it
+  /// may predate the client's onboarding.
+  againstInvoiceNumber String?
+  againstInvoiceDate   DateTime?
+
   voucher      Voucher?
   reconMatches GstReconMatch[]
 
@@ -170,6 +184,58 @@ model Invoice {
   @@index([userId, clientId, createdAt])
   @@index([clientId, invoiceNumber, vendorGstin])
   @@index([clientId, status])
+}
+
+/// Who did what to a client's books, and when.
+///
+/// The only actor field this schema had was `Voucher.approvedBy`, and with one
+/// login per firm that is a constant — so a practice could not answer the one
+/// question a regulated profession must be able to answer: *who posted this to
+/// the client's books?* Deletions were recorded nowhere at all.
+///
+/// Append-only by convention: nothing in the application updates or deletes a
+/// row here. The actor's email is denormalised on purpose, because the record
+/// has to outlive the staff member who left, and a join to a deleted `User`
+/// answers nothing.
+model AuditEvent {
+  id String @id @default(uuid())
+
+  /// The firm. Always present — this is the tenant boundary.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The client whose books were touched. Null for firm-level actions.
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  /// Who, as Clerk knows them, and as a human will read them. Both are copies:
+  /// the point of this table is to still make sense after the account is gone.
+  actorClerkId String?
+  actorEmail   String?
+  actorName    String?
+
+  /// A stable machine token — VOUCHER_APPROVED, VOUCHER_PUSHED,
+  /// VOUCHER_DELETED_FROM_TALLY, INVOICE_DELETED, MASTERS_CREATED.
+  action String
+
+  /// What it happened to. `entityId` is deliberately not a foreign key: the row
+  /// must survive the thing it describes being deleted, which is precisely the
+  /// case worth auditing.
+  entityType String
+  entityId   String?
+
+  /// One sentence a person can read without decoding the metadata.
+  summary String
+
+  /// Anything worth keeping that has no column — voucher counts, Tally's
+  /// counters, the REMOTEIDs a delete resolved.
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([clientId, createdAt])
+  @@index([entityType, entityId])
 }
 
 model Ledger {
@@ -348,7 +414,22 @@ model VoucherLine {
   quantity      Float?
   /// Unit as Tally spells it. Tally wants "10 Nos", not "10".
   unit          String?
-  rate          Float?
+
+  /// How this line allocates against a bill, when it does.
+  ///
+  /// Everything used to emit `New Ref`, which is right only for the document
+  /// that *creates* an outstanding. A payment or a return carrying `New Ref`
+  /// opens a second reference beside the invoice it was meant to settle: Tally
+  /// parks it On Account, the original stays fully outstanding, and every
+  /// ageing and supplier-statement report is wrong from that point on.
+  ///
+  /// `billRefType` is Tally's own vocabulary — "New Ref", "Agst Ref",
+  /// "Advance", "On Account" — kept as a string rather than an enum because it
+  /// is Tally's list to change, not ours. Null means no allocation, which is
+  /// correct for any line whose ledger is not bill-wise.
+  billRefType String?
+  billRefName String?
+  rate        Float?
 
   @@index([voucherId])
   @@index([ledgerId])
@@ -369,7 +450,7 @@ model StockItem {
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  name String
+  name    String
   /// Base unit as Tally spells it. Null blocks the Tally create rather than
   /// guessing: a base unit cannot be altered once stock has moved against it.
   unit    String?
@@ -1153,11 +1234,11 @@ model MappingTemplate {
 // ── BILLING & SUBSCRIPTIONS ──
 
 model Organization {
-  id           String       @id @default(uuid())
-  name         String
-  slug         String       @unique
-  ownerId      String
-  owner        User         @relation("OrgOwner", fields: [ownerId], references: [id])
+  id      String @id @default(uuid())
+  name    String
+  slug    String @unique
+  ownerId String
+  owner   User   @relation("OrgOwner", fields: [ownerId], references: [id])
 
   plan         OrgPlan      @default(INDIVIDUAL)
   billingCycle BillingCycle @default(MONTHLY)
@@ -1167,34 +1248,34 @@ model Organization {
   members       OrgMember[]
   invitations   TeamInvitation[]
 
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([ownerId])
 }
 
 model Subscription {
-  id                String       @id @default(uuid())
-  orgId             String
-  org               Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  id    String       @id @default(uuid())
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
-  razorpayOrderId   String?      @unique
-  razorpayPaymentId String?      @unique
+  razorpayOrderId   String? @unique
+  razorpayPaymentId String? @unique
   razorpaySignature String?
 
-  plan              OrgPlan
-  billingCycle      BillingCycle
-  seatCount         Int          @default(1)
-  pricePerSeat      Int
-  totalAmount       Int
-  currency          String       @default("INR")
+  plan         OrgPlan
+  billingCycle BillingCycle
+  seatCount    Int          @default(1)
+  pricePerSeat Int
+  totalAmount  Int
+  currency     String       @default("INR")
 
-  status            SubStatus    @default(PENDING)
-  paidAt            DateTime?
-  expiresAt         DateTime?
+  status    SubStatus @default(PENDING)
+  paidAt    DateTime?
+  expiresAt DateTime?
 
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([orgId, status])
 }
@@ -1227,24 +1308,24 @@ model GoogleOAuthToken {
 // ── TEAM INVITATIONS ──
 
 model TeamInvitation {
-  id           String       @id @default(uuid())
-  orgId        String
-  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  id    String       @id @default(uuid())
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
-  email        String
-  role         MemberRole   @default(CLERK)
-  token        String       @unique @default(uuid())
+  email String
+  role  MemberRole @default(CLERK)
+  token String     @unique @default(uuid())
 
-  status       InviteStatus @default(PENDING)
-  invitedById  String
-  invitedBy    User         @relation("SentInvitations", fields: [invitedById], references: [id])
+  status      InviteStatus @default(PENDING)
+  invitedById String
+  invitedBy   User         @relation("SentInvitations", fields: [invitedById], references: [id])
 
   acceptedById String?
-  acceptedBy   User?        @relation("AcceptedInvitations", fields: [acceptedById], references: [id])
+  acceptedBy   User?     @relation("AcceptedInvitations", fields: [acceptedById], references: [id])
   acceptedAt   DateTime?
   expiresAt    DateTime
 
-  createdAt    DateTime     @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([orgId, email])
   @@index([token])
@@ -1252,14 +1333,14 @@ model TeamInvitation {
 }
 
 model OrgMember {
-  id       String       @id @default(uuid())
-  orgId    String
-  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  userId   String
-  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role     MemberRole   @default(CLERK)
+  id     String       @id @default(uuid())
+  orgId  String
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId String
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   MemberRole   @default(CLERK)
 
-  joinedAt DateTime     @default(now())
+  joinedAt DateTime @default(now())
 
   @@unique([orgId, userId])
   @@index([userId])

@@ -1,0 +1,14 @@
+ACME MANUFACTURING PVT LTD
+Sales Register — 01/08/2026 to 31/08/2026
+
+Invoice No.,Invoice Date,Customer Name,GSTIN,Item Name,HSN,Qty,Rate,Taxable Value,CGST,SGST,IGST,Invoice Total,Narration
+INV-3001,03/08/2026,Sharma Traders,29AABCS1234L1Z5,Ambika Basmati Rice 5kg,1006,20,520,10400,260,260,,18532.5,Monthly grocery supply
+INV-3001,03/08/2026,Sharma Traders,29AABCS1234L1Z5,Sunflower Oil 1L Pouch,1512,50,145,7250,181.25,181.25,,,Monthly grocery supply
+INV-3002,06/08/2026,Delhi Supplies Pvt Ltd,07AAACD5678M1Z2,Steel Almirah 6ft,9403,2,9500,19000,,,3420,22420,Furniture order
+INV-3003,11/08/2026,Bengaluru Print House,29AAFCB3456Q1Z1,LED Bulb 9W,8539,100,85,8500,510,510,,16144,Mixed-rate order
+INV-3003,11/08/2026,Bengaluru Print House,29AAFCB3456Q1Z1,Detergent Powder 1kg,3402,30,110,3300,297,297,,,Mixed-rate order
+INV-3003,11/08/2026,Bengaluru Print House,29AAFCB3456Q1Z1,Ambika Basmati Rice 5kg,1006,5,520,2600,65,65,,,Mixed-rate order
+INV-3004,19/08/2026,Chennai Logistics,33AAGCC7890R1Z4,Detergent Powder 1kg,3402,80,108,8640,,,1555.2,33155.2,Bulk despatch
+INV-3004,19/08/2026,Chennai Logistics,33AAGCC7890R1Z4,LED Bulb 9W,8539,250,82,20500,,,2460,,Bulk despatch
+INV-3005,26/08/2026,Nagpur Steel Co,27AAECN9012P1Z8,Steel Almirah 6ft,9403,6,9200,55200,,,9936,65136,Almirah consignment
+,,TOTAL,,,,,,135390,1313.25,1313.25,17371.2,155387.7,

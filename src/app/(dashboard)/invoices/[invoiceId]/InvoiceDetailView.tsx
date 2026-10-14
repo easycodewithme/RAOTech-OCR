@@ -3,8 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   ArrowLeft,
   Save,
@@ -50,7 +48,7 @@ export default function InvoiceDetailView({ invoice }: { invoice: Invoice }) {
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [editData, setEditData] = useState(invoice.extractedData || {});
+  const [editData] = useState(invoice.extractedData || {});
 
   const items: any[] = invoice.items || invoice.extractedData?.items || [];
 

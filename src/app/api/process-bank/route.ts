@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { backendFetch } from "@/lib/backend";
+import { backendFetch, BackendTimeoutError } from "@/lib/backend";
 import { withRouteLogging } from "@/lib/trace";
 
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 // Proxy a bank statement file to the FastAPI /extract-bank endpoint
 async function processBank(req: Request) {
@@ -26,6 +26,9 @@ async function processBank(req: Request) {
 
     return NextResponse.json(await response.json());
   } catch (error) {
+    if (error instanceof BackendTimeoutError) {
+      return NextResponse.json({ error: error.message }, { status: 504 });
+    }
     console.error("[PROCESS_BANK_ERROR]", error);
     return NextResponse.json(
       { error: "Failed to connect to OCR backend. Is the Python server running on port 8001?" },

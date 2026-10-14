@@ -19,6 +19,7 @@ import {
   Filter,
   Building2,
   PlugZap,
+  Package,
   Settings,
   UserPlus,
 } from "lucide-react";
@@ -33,6 +34,11 @@ const routes = [
   { label: "Review queue", icon: Filter, href: "/review", localOnly: true },
   { label: "Sheet Upload", icon: FileSpreadsheet, href: "/sheets" },
   { label: "Transactions", icon: ListChecks, href: "/transactions" },
+  // Stock sits with the other per-client work, not under Settings. The item
+  // masters lived in a Settings tab while they were only a switch; once the
+  // app could report a closing balance they became a place you go to look
+  // something up, which is a different kind of screen.
+  { label: "Inventory", icon: Package, href: "/inventory" },
   { label: "GST Recon", icon: Scale, href: "/gst", localOnly: true },
   { label: "Reports", icon: BarChart3, href: "/reports", localOnly: true },
   { label: "Ledgers & Rules", icon: BookOpen, href: "/settings", exact: true },

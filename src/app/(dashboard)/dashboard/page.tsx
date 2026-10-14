@@ -9,6 +9,8 @@ import {
   Scale,
   XCircle,
   Clock,
+  CheckCircle2,
+  Copy,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -30,8 +32,10 @@ export default async function Dashboard() {
 
   const {
     invoiceCount,
+    duplicateCount = 0,
     draftCount,
     approvedCount,
+    postedCount,
     exportedCount,
     syncFailedCount,
     syncStuckCount,
@@ -151,7 +155,7 @@ export default async function Dashboard() {
           label="Unmapped Parties"
           value={unmappedParties.toString()}
           href="/transactions"
-          alert={unmappedParties > 0}
+          bg="var(--spx-card)"
         />
       </div>
 
@@ -167,10 +171,21 @@ export default async function Dashboard() {
           value={approvedCount.toString()}
           valueColor="#22c55e"
         />
+        {/* "In Tally" has to mean Tally. It used to count EXPORTED_DEMO too,
+            which is written the moment the XML file is downloaded — so a firm
+            that exported 400 vouchers and never ran the import in Tally was
+            told 400 were in their client's books. The real number comes from
+            VoucherSync; the merely-exported pile is still worth knowing, so it
+            stays as a subordinate line that says what it actually is. */}
         <StatCard
-          icon={<Download style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
+          icon={<CheckCircle2 style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
           label="In Tally"
-          value={exportedCount.toString()}
+          value={postedCount.toString()}
+          sub={
+            exportedCount > 0
+              ? `${exportedCount} exported to file, not confirmed in Tally`
+              : undefined
+          }
         />
         {/* The number this product exists to keep at zero. Previously it was
             reachable only by opening Transactions and ticking a filter you
@@ -185,10 +200,8 @@ export default async function Dashboard() {
         />
       </div>
 
-      {/* Two columns, not four: the container paints the 1px gap colour, so a
-          half-filled four-column row renders the empty cells as a grey slab. */}
       <div
-        className="grid grid-cols-2"
+        className="grid grid-cols-2 lg:grid-cols-4"
         style={{ gap: "1px", background: "var(--spx-border)", marginBottom: "24px" }}
       >
         {/* Stuck is not the same as failed and is worth its own number: it
@@ -208,7 +221,15 @@ export default async function Dashboard() {
           icon={<ClipboardList style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
           label="Invoices"
           value={invoiceCount.toString()}
+          href="/transactions"
         />
+        <StatCard
+          icon={<Copy style={{ width: "18px", height: "18px" }} strokeWidth={1.5} />}
+          label="Duplicate Invoices"
+          value={duplicateCount.toString()}
+          href="/transactions"
+        />
+        <div style={{ background: "var(--spx-canvas)" }} />
       </div>
 
       {/* ── Main Grid: Table + Quick Actions ── */}
@@ -478,6 +499,8 @@ function StatCard({
   icon,
   label,
   value,
+  sub,
+  bg,
   valueColor,
   href,
   alert = false,
@@ -485,6 +508,10 @@ function StatCard({
   icon: React.ReactNode;
   label: string;
   value: string;
+  /** A smaller, quieter second fact about the same card. Deliberately not a
+   *  second headline: anything shown at the size of `value` reads as another
+   *  number the user is meant to act on. */
+  sub?: string;
   bg?: string;
   valueColor?: string;
   href?: string;
@@ -495,7 +522,7 @@ function StatCard({
       className="min-w-0 transition"
       style={{
         padding: "16px 18px",
-        background: alert ? "rgba(229, 62, 62, 0.04)" : "var(--spx-card)",
+        background: bg || (alert ? "rgba(229, 62, 62, 0.04)" : "var(--spx-card)"),
         borderRight: alert ? "2px solid rgba(229, 62, 62, 0.5)" : undefined,
       }}
     >
@@ -529,7 +556,29 @@ function StatCard({
       >
         {value}
       </p>
+      {sub && (
+        <p
+          style={{
+            fontSize: "11px",
+            color: "var(--spx-muted)",
+            letterSpacing: "0.3px",
+            lineHeight: 1.4,
+            marginTop: "8px",
+          }}
+        >
+          {sub}
+        </p>
+      )}
     </div>
   );
-  return href ? <Link href={href}>{card}</Link> : card;
+  return href ? (
+    <Link
+      href={href}
+      className="block cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--spx-text)]"
+    >
+      {card}
+    </Link>
+  ) : (
+    card
+  );
 }

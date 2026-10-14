@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { buildVoucher } from "../buildVoucher";
-import type { NormalizedInvoice, ResolvedLedgers } from "../types";
+import { normName } from "../normalize";
+import type { StockItemIndex } from "../resolveStockItems";
+import type { NormalizedInvoice, NormalizedItem, ResolvedLedgers } from "../types";
 
 function baseResolved(overrides: Partial<ResolvedLedgers> = {}): ResolvedLedgers {
   return {
@@ -148,5 +150,88 @@ describe("buildVoucher — balance invariant", () => {
     );
     expect(v.lines.some((l) => l.role === "ITEM")).toBe(true);
     expect(v.totalDebit).toBeCloseTo(v.totalCredit, 2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Inventory: the unmatched-item warning
+// ---------------------------------------------------------------------------
+
+describe("buildVoucher — unmatched stock items", () => {
+  const index = (...names: Array<{ name: string; unit?: string | null }>): StockItemIndex => {
+    const map: StockItemIndex = new Map();
+    names.forEach((n, i) =>
+      map.set(normName(n.name)!, { id: `S${i}`, name: n.name, unit: n.unit ?? "Nos" })
+    );
+    return map;
+  };
+
+  const line = (name: string, price: number, qty = 0) => ({
+    item: { name, qty, rate: qty ? price / qty : 0, price, hsnCode: null, gstRate: null } as NormalizedItem,
+    ledger: { id: "L_PURCH", name: "Purchase Accounts", confidence: 0.9, via: "DEFAULT" as const },
+  });
+
+  const build = (lines: ReturnType<typeof line>[], stockItems?: StockItemIndex) => {
+    const total = lines.reduce((s, l) => s + l.item.price, 0);
+    return buildVoucher(
+      inv({ subtotal: total, total, items: lines.map((l) => l.item) }),
+      baseResolved({ itemLedgers: lines }),
+      "PURCHASE",
+      stockItems ? { stockItems } : {}
+    );
+  };
+
+  it("names every item the workspace has no master for", () => {
+    const v = build(
+      [line("Widget 10mm", 1000), line("Bolt M6", 500), line("Grommet", 250)],
+      index({ name: "Widget 10mm" })
+    );
+    const warning = v.warnings.find((w) => w.includes("stock item master"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("2 of 3");
+    expect(warning).toContain('"Bolt M6"');
+    expect(warning).toContain('"Grommet"');
+    expect(warning).not.toContain('"Widget 10mm"');
+    // The voucher still posts, and still balances — this is a warning, not a
+    // refusal, because a ledger-only line is a valid entry.
+    expect(v.totalDebit).toBeCloseTo(v.totalCredit, 2);
+  });
+
+  it("counts distinct names once but reports the number of lines", () => {
+    const v = build([line("Bolt M6", 500), line("bolt  m6", 500)], index({ name: "Widget" }));
+    const warning = v.warnings.find((w) => w.includes("stock item master"))!;
+    expect(warning).toContain("2 of 2");
+    expect(warning.match(/"bolt  m6"/)).toBeNull(); // folded onto the first spelling
+  });
+
+  it("says nothing when the workspace keeps no stock masters at all", () => {
+    // The services client. Ledger-only item lines are correct for them, and a
+    // warning on every line would be noise that devalues every other warning.
+    const v = build([line("Consulting", 50000), line("Travel", 2500)]);
+    expect(v.warnings.some((w) => w.includes("stock item master"))).toBe(false);
+  });
+
+  it("says nothing when the index exists but is empty", () => {
+    const v = build([line("Consulting", 50000)], new Map());
+    expect(v.warnings.some((w) => w.includes("stock item master"))).toBe(false);
+  });
+
+  it("says nothing when every line matches, and allocates using the master's spelling", () => {
+    const v = build([line("widget  10MM", 1000, 4)], index({ name: "Widget 10mm", unit: "Nos" }));
+    expect(v.warnings.some((w) => w.includes("stock item master"))).toBe(false);
+    const item = v.lines.find((l) => l.role === "ITEM")!;
+    expect(item.stockItemName).toBe("Widget 10mm");
+    expect(item.unit).toBe("Nos");
+    expect(item.quantity).toBe(4);
+  });
+
+  it("carries no quantity when the source never gave one", () => {
+    // mapRows now reports 'no quantity' rather than inventing 1 at a rate of
+    // the whole line total; the allocation must then carry neither.
+    const v = build([line("Widget 10mm", 1000)], index({ name: "Widget 10mm" }));
+    const item = v.lines.find((l) => l.role === "ITEM")!;
+    expect(item.stockItemName).toBe("Widget 10mm");
+    expect(item.quantity).toBeNull();
+    expect(item.rate).toBeNull();
   });
 });

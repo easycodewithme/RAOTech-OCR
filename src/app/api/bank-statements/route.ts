@@ -5,7 +5,6 @@ import { seedLedgersForUser } from "@/lib/accounting/seedLedgers";
 import { cleanDate, cleanMoney } from "@/lib/accounting/normalize";
 import {
   classifyBankTxn,
-  narrationKey,
   suggestLedgerFromNarrationMemory,
 } from "@/lib/bank/classify";
 

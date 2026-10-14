@@ -8,7 +8,6 @@ import {
   Landmark,
   ArrowRight,
   CheckSquare,
-  Download,
   Loader2,
   AlertTriangle,
   Send,
@@ -154,18 +153,13 @@ export default function TransactionsList({
   const [failedOnly, setFailedOnly] = useState(initialSyncFilter === "failed");
   const [stuckOnly, setStuckOnly] = useState(initialSyncFilter === "stuck");
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
+  // Export is irreversible from this screen: the server flips every voucher it
+  // writes to EXPORTED_DEMO, which is what `locked` on the review page reads,
+  // so those vouchers can never be edited again. That earns a confirm.
+  const [confirmExport, setConfirmExport] = useState<string[] | null>(null);
   const { toast } = useToast();
   // Populated when the server refuses an export because Tally would reject it.
   const [blocked, setBlocked] = useState<ExportIssue[] | null>(null);
-  const [hasDemoAccess, setHasDemoAccess] = useState(false);
-  const [demoAccessChecked, setDemoAccessChecked] = useState(false);
-
-  useEffect(() => {
-    void fetch("/api/demo")
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => setHasDemoAccess(Boolean(data?.booking)))
-      .finally(() => setDemoAccessChecked(true));
-  }, []);
 
   const voucherIds = useMemo(() => vouchers.map((v) => v.id), [vouchers]);
   const { syncs, refresh: refreshSyncs } = useVoucherSyncs(voucherIds);
@@ -285,11 +279,22 @@ export default function TransactionsList({
     }
   }
 
-  async function exportTally(ids?: string[]) {
+  /**
+   * Export the given vouchers as Tally XML.
+   *
+   * `ids` is required and must be non-empty. An empty body is not "export
+   * nothing" to /api/export/tally — it means "every APPROVED voucher for this
+   * client", which is how a stray click on an empty selection used to flip a
+   * whole client's ledger to EXPORTED_DEMO and lock it against editing, with
+   * no confirmation and nothing to undo it.
+   */
+  async function exportTally(ids: string[]) {
+    if (!ids.length) return;
+
     const startedAt = performance.now();
 
     trace("export-tally:start", {
-      selectedCount: ids?.length ?? 0,
+      selectedCount: ids.length,
     });
 
     setBusy(true);
@@ -300,9 +305,7 @@ export default function TransactionsList({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(
-          ids?.length ? { voucherIds: ids } : {}
-        ),
+        body: JSON.stringify({ voucherIds: ids }),
       });
 
       // 422 means preflight caught something Tally would reject. Show exactly
@@ -349,7 +352,7 @@ export default function TransactionsList({
       );
 
       trace("export-tally:done", {
-        selectedCount: ids?.length ?? 0,
+        selectedCount: ids.length,
         durationMs: Number(
           (performance.now() - startedAt).toFixed(2)
         ),
@@ -411,24 +414,46 @@ export default function TransactionsList({
               Delete From Tally ({deletable.length})
             </Button>
           )}
-          {/* These actions require a confirmed demo booking. */}
           <Button
             size="sm"
-            disabled={busy || !demoAccessChecked}
-            onClick={() => hasDemoAccess ? void exportTally() : router.push("/book-your-demo?returnTo=/transactions")}
-            className="bg-green-600 hover:bg-green-500 text-white"
+            disabled={busy || preflighting || pushBlocked}
+            className="cursor-pointer bg-[#0b6b3a] hover:bg-[#08522c] text-white !opacity-100 disabled:!opacity-100 disabled:bg-[#0b6b3a] disabled:text-white disabled:cursor-not-allowed shadow-sm font-medium transition-colors"
+            onClick={() => {
+              if (!selected.size) {
+                const approvedIds = filtered
+                  .filter((v) => v.status === "APPROVED" && !v.hasUnmapped)
+                  .map((v) => v.id);
+
+                if (approvedIds.length > 0) {
+                  setSelected(new Set(approvedIds));
+                  toast(`Selected ${approvedIds.length} approved voucher(s). Click Export to Tally to send.`, "info");
+                } else {
+                  toast("No approved vouchers ready to export. Please approve vouchers first.", "info");
+                }
+                return;
+              }
+              void push.start([...selected]);
+            }}
+            title={
+              pushBlocked
+                ? "Pre-flight found problems Tally would reject. Fix them below, or deselect those vouchers."
+                : !selected.size
+                  ? "Click to select approved vouchers and export to Tally"
+                  : undefined
+            }
           >
-            <Download className="mr-2 h-4 w-4" />
-            {demoAccessChecked && !hasDemoAccess ? "Book a demo to export" : "Export XML"}
-          </Button>
-          <Button
-            size="sm"
-            disabled={!demoAccessChecked}
-            className="bg-[#0b6b3a] hover:bg-[#0a5c32]"
-            onClick={() => hasDemoAccess ? void push.start([...selected]) : router.push("/book-your-demo?returnTo=/transactions")}
-          >
-            <Send className="mr-2 h-4 w-4" />
-            {demoAccessChecked && !hasDemoAccess ? "Book a demo to push" : `Push to Tally (${selected.size})`}
+            {preflighting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="mr-2 h-4 w-4" />
+            )}
+            {preflighting
+              ? "Checking..."
+              : pushBlocked
+                ? `Blocked (${selected.size})`
+                : selected.size > 0
+                  ? `Export to Tally (${selected.size})`
+                  : "Export to Tally"}
           </Button>
         </div>
       </div>
@@ -830,6 +855,29 @@ export default function TransactionsList({
             void push.remove(ids);
           }}
           onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {confirmExport && (
+        <ConfirmDialog
+          title={`Export ${confirmExport.length} voucher${confirmExport.length === 1 ? "" : "s"} to Tally XML?`}
+          body={
+            <>
+              {confirmExport.length === 1 ? "This voucher" : "These vouchers"} will be marked
+              exported and can no longer be edited here — the file you are about to download was
+              built from the mapping as it stands now, so changing it afterwards would put this
+              workspace out of step with whatever you import into Tally. Downloading the file does
+              not put anything in Tally; you still have to run the import there.
+            </>
+          }
+          confirmLabel={`Export ${confirmExport.length}`}
+          busy={busy}
+          onConfirm={() => {
+            const ids = confirmExport;
+            setConfirmExport(null);
+            void exportTally(ids);
+          }}
+          onCancel={() => setConfirmExport(null)}
         />
       )}
     </div>

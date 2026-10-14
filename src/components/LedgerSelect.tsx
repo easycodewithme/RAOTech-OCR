@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle, ElementType } from "react";
 import { Check, ChevronsUpDown, Plus, Loader2, Search, Building2, ShoppingBag, Receipt, Briefcase } from "lucide-react";
+import type { LedgerGroup, LedgerType } from "@/lib/accounting/types";
 
 export interface LedgerOption {
   id: string;
@@ -104,6 +105,92 @@ function getPrimaryCategoryForRole(role?: string): CategoryKey | null {
   return null;
 }
 
+
+/**
+ * What group and type a ledger created inline should get.
+ *
+ * Pulled out of the click handler so it can be tested without a DOM: these
+ * two strings decide where a ledger lands in the client's own TallyPrime, and
+ * a wrong one is not a cosmetic defect — it is a master filed under the wrong
+ * head in someone's books, found weeks later by their accountant.
+ *
+ * The voucher decides the side, which is why it is a parameter. A party on a
+ * sale is a customer and belongs under Sundry Debtors; the same control on a
+ * purchase is a supplier and belongs under Sundry Creditors. Reading it off
+ * the role alone cannot tell those apart, so every party was filed as a
+ * creditor — including every customer.
+ *
+ * Returns are deliberately grouped with the document they reverse rather than
+ * by which way the money moves: a credit note is a sales return, so its party
+ * is still the customer.
+ */
+export function defaultLedgerForRole(
+  role?: string,
+  voucherType?: string
+): { group: LedgerGroup; ledgerType: LedgerType } {
+  const r = (role ?? "").toUpperCase();
+  const v = (voucherType ?? "").toUpperCase();
+
+  const SALES_SIDE = v === "SALE" || v === "CREDIT_NOTE" || v === "RECEIPT";
+
+  if (r === "PARTY") {
+    // Unknown voucher keeps the old behaviour: this is a purchase-bill product
+    // first, so a creditor is the safer of the two when nothing says otherwise.
+    return SALES_SIDE
+      ? { group: "SUNDRY_DEBTORS", ledgerType: "PARTY" }
+      : { group: "SUNDRY_CREDITORS", ledgerType: "PARTY" };
+  }
+
+  if (r === "CGST" || r === "SGST" || r === "IGST" || r === "CESS" || r === "TAX") {
+    /**
+     * `LedgerType` has no `TAX`. It has TAX_INPUT and TAX_OUTPUT, and the
+     * value sent here goes to Prisma uncast — so "TAX" was rejected as an
+     * invalid enum value and creating a tax ledger inline failed outright.
+     *
+     * Input versus output cannot be read off a name typed mid-review, but it
+     * can be read off the voucher: GST on a purchase is input credit, GST on
+     * a sale is a liability. Guessing that wrong misstates a return, so the
+     * fallback follows the same purchase-first default as above.
+     */
+    return SALES_SIDE
+      ? { group: "DUTIES_AND_TAXES", ledgerType: "TAX_OUTPUT" }
+      : { group: "DUTIES_AND_TAXES", ledgerType: "TAX_INPUT" };
+  }
+
+  if (r === "BANK") {
+    // The role is literally the group. A bank line creating an Indirect
+    // Expense was the single most misleading outcome of the old default,
+    // because the bank picker is where it happened most.
+    return { group: "BANK_ACCOUNTS", ledgerType: "BANK" };
+  }
+
+  if (r === "ROUND_OFF") {
+    return { group: "INDIRECT_EXPENSES", ledgerType: "ROUND_OFF" };
+  }
+
+  if (r === "DISCOUNT") {
+    /**
+     * Which way a discount points depends on whose document it is: a discount
+     * allowed on a sale is an expense, a discount received on a purchase is
+     * income. Filing both as an expense understates income on every purchase
+     * that carries one.
+     */
+    return SALES_SIDE
+      ? { group: "INDIRECT_EXPENSES", ledgerType: "EXPENSE" }
+      : { group: "INDIRECT_INCOME", ledgerType: "INCOME" };
+  }
+
+  if (r === "ITEM") {
+    // An item line on a sale is revenue, not cost. Filing it under Purchase
+    // Accounts put sales into the purchase ledger in the client's own books.
+    return SALES_SIDE
+      ? { group: "SALES_ACCOUNTS", ledgerType: "SALE" }
+      : { group: "PURCHASE_ACCOUNTS", ledgerType: "PURCHASE" };
+  }
+
+  return { group: "INDIRECT_EXPENSES", ledgerType: "EXPENSE" };
+}
+
 /**
  * Searchable, categorized ledger picker with smart role-prioritization and inline creation.
  */
@@ -116,6 +203,8 @@ export const LedgerSelect = forwardRef<
     onCreated?: (ledger: LedgerOption) => void;
     placeholder?: string;
     role?: string;
+    /** The voucher this line belongs to; decides the side an inline-created ledger is filed on. */
+    voucherType?: string;
   }
 >(function LedgerSelect(
   {
@@ -125,6 +214,7 @@ export const LedgerSelect = forwardRef<
     onCreated,
     placeholder = "Select ledger…",
     role,
+    voucherType,
   },
   ref
 ) {
@@ -197,19 +287,7 @@ export const LedgerSelect = forwardRef<
     if (!name) return;
     setCreating(true);
 
-    // Smart defaults for group/type based on role
-    let group = "INDIRECT_EXPENSES";
-    let ledgerType = "EXPENSE";
-    if (role === "PARTY") {
-      group = "SUNDRY_CREDITORS";
-      ledgerType = "PARTY";
-    } else if (role === "CGST" || role === "SGST" || role === "IGST" || role === "TAX") {
-      group = "DUTIES_AND_TAXES";
-      ledgerType = "TAX";
-    } else if (role === "ITEM") {
-      group = "PURCHASE_ACCOUNTS";
-      ledgerType = "PURCHASE";
-    }
+    const { group, ledgerType } = defaultLedgerForRole(role, voucherType);
 
     try {
       const res = await fetch("/api/ledgers", {

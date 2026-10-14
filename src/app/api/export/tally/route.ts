@@ -82,22 +82,25 @@ async function postTallyExport(req: Request) {
         gstRate: l.gstRate,
         gstin: l.parentGstin,
       })),
-      vouchers: vouchers.map((v) => ({
-        id: v.id,
-        voucherType: v.voucherType,
-        date: v.date,
-        narration: v.narration,
-        partyName: v.invoice?.vendor,
-        invoiceNumber: v.invoice?.invoiceNumber,
-        lines: v.lines.map((l) => ({
-          ledgerName: l.ledgerNameSnapshot || "Unknown",
-          role: l.role,
-          debit: l.debit,
-          credit: l.credit,
-          hsnCode: l.hsnCode,
-          gstRate: l.gstRate,
-        })),
-      })),
+      vouchers: vouchers.map((v) => {
+        const partyLine = v.lines.find((l) => l.role === "PARTY");
+        return {
+          id: v.id,
+          voucherType: v.voucherType,
+          date: v.date,
+          narration: v.narration,
+          partyName: partyLine?.ledgerNameSnapshot || v.invoice?.vendor,
+          invoiceNumber: v.invoice?.invoiceNumber,
+          lines: v.lines.map((l) => ({
+            ledgerName: l.ledgerNameSnapshot || "Unknown",
+            role: l.role,
+            debit: l.debit,
+            credit: l.credit,
+            hsnCode: l.hsnCode,
+            gstRate: l.gstRate,
+          })),
+        };
+      }),
     });
 
     const fileName = `tally_export_${client.name.replace(/\s+/g, "_")}_${new Date()

@@ -220,26 +220,72 @@ export async function resolveLedgersForInvoice(
     }),
   ]);
 
-  const isPurchase = voucherType === "PURCHASE";
+  /**
+   * Which side of the books this voucher belongs to — and therefore whether it
+   * reverses Input tax or Output tax.
+   *
+   * Under Indian GST a credit note and a debit note are NOT mirror images of
+   * each other, which is the whole reason this is not simply
+   * `voucherType === "PURCHASE"`:
+   *
+   *   CREDIT_NOTE — a *sales* return. The seller raises it against a sales
+   *                 invoice they issued, so it belongs to the SALE ledgers and
+   *                 unwinds Output GST.
+   *   DEBIT_NOTE  — a *purchase* return. The buyer raises it against a bill
+   *                 they received, so it belongs to the PURCHASE ledgers and
+   *                 unwinds Input GST.
+   *
+   * `buildVoucher.ts` groups CREDIT_NOTE with PURCHASE instead, and that looks
+   * like a contradiction until you notice it is answering a different question:
+   * which side of the entry the *party* sits on. A sales return credits the
+   * customer exactly as a purchase credits the supplier, and a purchase return
+   * debits the supplier exactly as a sale debits the customer. Both files are
+   * right about their own question. Do not "align" one to the other.
+   *
+   * Getting this wrong is silent: the sheet wizard maps PURCHASE_RETURN ->
+   * DEBIT_NOTE (`api/excel/uploads/[uploadId]/commit`), so a purchase return
+   * would file itself into the client's sales figures and their Output GST,
+   * surfacing only when GSTR-1 and GSTR-3B disagree with the books.
+   */
+  const isPurchaseSide = voucherType === "PURCHASE" || voucherType === "DEBIT_NOTE";
 
-  // System ledgers
-  const cgst = findSystem(ledgers, (l) =>
-    isPurchase ? l.name === "CGST Input" : l.name === "CGST Output"
-  );
-  const sgst = findSystem(ledgers, (l) =>
-    isPurchase ? l.name === "SGST Input" : l.name === "SGST Output"
-  );
-  const igst = findSystem(ledgers, (l) =>
-    isPurchase ? l.name === "IGST Input" : l.name === "IGST Output"
-  );
-  const roundOff = findSystem(ledgers, (l) => l.ledgerType === "ROUND_OFF");
+  // System ledgers with flexible matching + auto-creation fallback so tax lines are never unmapped
+  const findTax = (taxType: "CGST" | "SGST" | "IGST") => {
+    const isInput = isPurchaseSide;
+    const kindStr = isInput ? "INPUT" : "OUTPUT";
+    const pattern = new RegExp(`\\b${taxType}\\b`, "i");
+
+    // 1. Exact or contains taxType + Input/Output
+    let match = ledgers.find((l) => {
+      const u = l.name.toUpperCase();
+      return pattern.test(u) && u.includes(kindStr);
+    });
+
+    // 2. Contains taxType (e.g. "IGST", "IGST Tax")
+    if (!match) {
+      match = ledgers.find((l) => pattern.test(l.name));
+    }
+
+    // 3. Match by ledgerType
+    if (!match) {
+      const typeWanted: LedgerType = isInput ? "TAX_INPUT" : "TAX_OUTPUT";
+      match = ledgers.find((l) => l.ledgerType === typeWanted);
+    }
+
+    return match ?? null;
+  };
+
+  const cgst = findTax("CGST");
+  const sgst = findTax("SGST");
+  const igst = findTax("IGST");
+  const roundOff = findSystem(ledgers, (l) => l.ledgerType === "ROUND_OFF" || /round\s*off/i.test(l.name));
   const discount = findSystem(
     ledgers,
-    (l) => l.name === (isPurchase ? "Discount Received" : "Discount Allowed")
+    (l) => l.name === (isPurchaseSide ? "Discount Received" : "Discount Allowed")
   );
 
   // Item default + rate ledgers (purchase or sales side)
-  const sideType: LedgerType = isPurchase ? "PURCHASE" : "SALE";
+  const sideType: LedgerType = isPurchaseSide ? "PURCHASE" : "SALE";
   const sideLedgers = ledgers.filter((l) => l.ledgerType === sideType);
   const defaultLedger =
     sideLedgers.find((l) => l.gstRate == null) ?? sideLedgers[0] ?? null;

@@ -459,6 +459,62 @@ describe("mapRows — WITH_ITEM row grouping", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Quantity
+// ---------------------------------------------------------------------------
+
+describe("mapRows — item quantity is never invented", () => {
+  const headers = ["Inv", "Date", "Party", "Item", "Qty", "Rate", "Amount"];
+  const base = { invoiceNumber: 0, date: 1, partyName: 2, itemName: 3, amount: 6 };
+  const itemOf = (m: SheetMapping, rows: CellValue[][]) =>
+    mapRows(sheet(headers, rows), m, noIssues).rows[0].invoice!.items[0];
+
+  it("an unmapped quantity column yields no quantity, not one unit", () => {
+    // The bug this replaces: `qty || 1` with `rate` falling back to the line
+    // amount posted one unit of every item at a rate of the whole line total.
+    const m = mapping({ itemMode: "WITH_ITEM", fields: base });
+    const item = itemOf(m, [["INV-1", "05/08/2024", "Acme", "Widget", null, null, 5000]]);
+    expect(item.qty).toBe(0);
+    expect(item.price).toBe(5000);
+    expect(item.rate).not.toBe(5000);
+    expect(item.rate).toBe(0);
+  });
+
+  it("a blank cell in a mapped quantity column is 'not provided' too", () => {
+    const m = mapping({ itemMode: "WITH_ITEM", fields: { ...base, quantity: 4 } });
+    const item = itemOf(m, [["INV-1", "05/08/2024", "Acme", "Widget", null, null, 5000]]);
+    expect(item.qty).toBe(0);
+    expect(item.rate).toBe(0);
+  });
+
+  it("keeps a genuine 1 as 1, distinct from 'not provided'", () => {
+    const m = mapping({ itemMode: "WITH_ITEM", fields: { ...base, quantity: 4 } });
+    const item = itemOf(m, [["INV-1", "05/08/2024", "Acme", "Widget", 1, null, 5000]]);
+    expect(item.qty).toBe(1);
+    expect(item.rate).toBe(5000); // derived, and honestly so: one unit at 5000
+  });
+
+  it("derives the rate from a real quantity, and takes a stated rate as given", () => {
+    const m = mapping({ itemMode: "WITH_ITEM", fields: { ...base, quantity: 4, rate: 5 } });
+    const derived = itemOf(m, [["INV-1", "05/08/2024", "Acme", "Widget", 4, null, 400]]);
+    expect(derived.qty).toBe(4);
+    expect(derived.rate).toBe(100);
+
+    const stated = itemOf(m, [["INV-1", "05/08/2024", "Acme", "Widget", 4, 90, 400]]);
+    expect(stated.rate).toBe(90);
+  });
+
+  it("still falls back to qty x rate for the line amount when there is no amount column", () => {
+    const m = mapping({
+      itemMode: "WITH_ITEM",
+      fields: { invoiceNumber: 0, date: 1, partyName: 2, itemName: 3, quantity: 4, rate: 5 },
+    });
+    const item = itemOf(m, [["INV-1", "05/08/2024", "Acme", "Widget", 3, 200, null]]);
+    expect(item.price).toBe(600);
+    expect(item.qty).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // CALCULATE
 // ---------------------------------------------------------------------------
 

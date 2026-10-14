@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { backendFetch } from "@/lib/backend";
+import { backendFetch, BackendTimeoutError } from "@/lib/backend";
 import { withRouteLogging } from "@/lib/trace";
 
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 async function processInvoice(req: Request) {
   try {
@@ -36,6 +36,9 @@ async function processInvoice(req: Request) {
     return NextResponse.json(result);
 
   } catch (error) {
+    if (error instanceof BackendTimeoutError) {
+      return NextResponse.json({ error: error.message }, { status: 504 });
+    }
     console.error("[PROCESS_INVOICE_ERROR]", error);
     return NextResponse.json(
       { error: "Failed to connect to OCR backend. Is the Python server running on port 8001?" },

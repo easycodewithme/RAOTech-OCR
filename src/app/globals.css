@@ -272,3 +272,15 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--spx-scrollbar-hover);
 }
+
+/* ── Hide scrollbar for clean mobile horizontal rails ── */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+
+

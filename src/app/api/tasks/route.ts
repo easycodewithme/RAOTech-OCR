@@ -12,7 +12,7 @@ export async function GET() {
       orderBy: [{ status: "asc" }, { priority: "asc" }, { createdAt: "desc" }],
     });
     return NextResponse.json({ tasks });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Failed" }, { status: 500 });
   }
 }
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
       },
     });
     return NextResponse.json({ task });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Failed" }, { status: 500 });
   }
 }
@@ -60,7 +60,7 @@ export async function PATCH(req: Request) {
       },
     });
     return NextResponse.json({ task: updated });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Failed" }, { status: 500 });
   }
 }

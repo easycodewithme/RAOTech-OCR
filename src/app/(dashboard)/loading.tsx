@@ -1,4 +1,4 @@
-import { Skeleton, TableSkeleton, PageHeaderSkeleton } from "@/components/Skeleton";
+import { TableSkeleton, PageHeaderSkeleton } from "@/components/Skeleton";
 
 /**
  * Shown the instant a sidebar link is clicked, while the server renders the
