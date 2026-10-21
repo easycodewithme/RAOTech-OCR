@@ -23,23 +23,17 @@ export function backendHeaders(extra: Record<string, string> = {}): Record<strin
  */
 /**
  * How long to wait on the backend before giving up.
- *
- * It runs on a free Render instance that spins down when idle; a measured cold
- * start is ~24s. Without a deadline this `fetch` simply hangs until the
- * platform kills the whole function, which surfaces as a blank screen with no
- * error — the reader is left thinking extraction silently produced nothing.
- *
- * 45s sits under the route's own `maxDuration = 60` so the timeout fires here,
- * where it can be explained, rather than in the platform where it cannot.
+ * With Render cold starts (~25s) and Datalab processing (~40-60s), 45s is too short.
+ * Increased to 120s (or custom BACKEND_TIMEOUT_MS from env).
  */
-const BACKEND_TIMEOUT_MS = 45_000;
+const BACKEND_TIMEOUT_MS = Number(process.env.BACKEND_TIMEOUT_MS) || 120_000;
 
 /** Thrown when the backend did not answer in time, so callers can say why. */
 export class BackendTimeoutError extends Error {
   constructor() {
     super(
       "The OCR service did not respond in time. It sleeps when idle and takes " +
-        "around half a minute to wake — try again in a moment."
+      "around half a minute to wake — try again in a moment."
     );
     this.name = "BackendTimeoutError";
   }
