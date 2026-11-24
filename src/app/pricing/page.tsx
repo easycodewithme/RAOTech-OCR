@@ -5,8 +5,9 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { SignInButton, SignUpButton, useUser } from "@clerk/nextjs";
+import { SignUpButton, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
+import MarketingNavbar from "@/components/marketing-navbar";
 
 /* ────────────────────────────────────────────────────────────────
    Types & Razorpay Gateway
@@ -185,65 +186,8 @@ export default function PricingPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col justify-between font-sans selection:bg-foreground selection:text-background">
-      {/* ── Top Header Bar (Black & White Theme) ── */}
-      <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-20 max-w-6xl items-center justify-between px-6 lg:px-8">
-          {/* Brand Logo */}
-          <Link
-            href="/"
-            className="flex items-center gap-3 text-xl font-bold tracking-tight"
-          >
-            <span>RAO AI</span>
-            <span className="font-mono text-[11px] font-normal tracking-[0.2em] text-muted-foreground uppercase">
-              PLATFORM
-            </span>
-          </Link>
-
-          {/* Navigation Links */}
-          <nav className="hidden md:flex items-center gap-8 text-sm text-muted-foreground">
-            <Link href="/#platform" className="hover:text-foreground transition-colors">
-              Product
-            </Link>
-            <Link
-              href="/pricing"
-              className="text-foreground font-medium relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[2px] after:w-full after:bg-foreground"
-            >
-              Pricing
-            </Link>
-            <Link href="/book-your-demo" className="hover:text-foreground transition-colors">
-              Demo
-            </Link>
-          </nav>
-
-          {/* Right Header Area */}
-          <div className="flex items-center gap-4">
-            {isSignedIn ? (
-              <Button
-                onClick={() => router.push("/dashboard")}
-                className="rounded-xl bg-foreground hover:bg-foreground/90 text-background text-xs font-semibold px-4 py-2"
-              >
-                Dashboard
-              </Button>
-            ) : (
-              <div className="flex items-center gap-2.5">
-                <SignInButton mode="modal" forceRedirectUrl="/dashboard">
-                  <Button
-                    variant="ghost"
-                    className="text-muted-foreground hover:text-foreground hover:bg-secondary rounded-xl text-xs font-medium px-3.5"
-                  >
-                    Sign In
-                  </Button>
-                </SignInButton>
-                <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
-                  <Button className="rounded-xl bg-foreground hover:bg-foreground/90 text-background text-xs font-semibold px-4 py-2 shadow-sm">
-                    Get Started
-                  </Button>
-                </SignUpButton>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
+      {/* ── Navbar (shared with landing page) ── */}
+      <MarketingNavbar />
 
       {/* ── Main Content Area ── */}
       <main className="flex-1">
